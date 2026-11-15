@@ -1,55 +1,41 @@
 ## Inspiration
 
-When air traffic control communications failed across the U.S., flights were grounded nationwide. Aviation is among the safest ways to travel, yet incidents like this still happen, and officials described the system as outdated. We asked a simple question: **what would it look like if a controller could rehearse the worst day before it happens?**
+When air traffic control communications failed across the U.S., flights were grounded nationwide. Aviation is regarded as one of the safest forms of travel, yet incidents like this still happen, and officials described the system as outdated. That shocked us, so we asked a simple question: what would it look like if a controller could rehearse the worst day before it happens?
 
 ## What it does
 
-AeroFlo is an AI-assisted air traffic operations workspace. It gives a controller one place to:
+AeroFlo is an AI-assisted air traffic operations workspace that gives a controller one place to see the whole network, spot trouble early, and test how the system would respond to a failure. A U.S. map shows aircraft, routes and airport surface views, with filters and a replay timeline. An Alerts and Checks view surfaces bottlenecks, conflicts and unreliable data, ranked as warnings or critical issues.
 
-- **See the whole network.** A U.S. map with aircraft, routes, state outlines, airport surface views for multiple airports, filters, and a replay timeline.
-- **Spot trouble early.** An Alerts & Checks view surfaces bottlenecks, conflicts and unreliable data, ranked as warning or critical.
-- **Stress-test the system.** A What-If Lab simulates communications outages, runway closures, weather delays, traffic surges and infrastructure failures. Users can set the timing and restoration, then compare outcomes side by side.
-- **Plan degraded operations.** A dedicated view shows how a disruption spreads from one airport to the wider airspace network.
-- **Ask in plain language.** An AI assistant explains what is on screen and proposes a scenario. A proposal is labelled hypothetical and a human must review it before it runs.
-- **Hear what matters.** Every new or escalated alert plays a tone and is read aloud (ElevenLabs when configured, browser voice otherwise), so a controller doesn't have to look away from the traffic.
+The What-If Lab lets users simulate communications outages, runway closures, weather delays, traffic surges and infrastructure failures. Users can set when each disruption starts and how long it takes to restore, then compare outcomes side by side. A Degraded Operations view shows how a problem at one airport spreads through the wider airspace network.
 
-Every number is clearly labelled **synthetic** or **estimated**. AeroFlo is an education and research tool, not operational guidance.
+An AI assistant explains what is on screen and can propose a scenario in plain language. Every proposal is labelled as hypothetical, and a person must review it before it runs. Each new or escalated alert is also read aloud, so a controller does not have to look away from the traffic. Every number in AeroFlo is clearly labelled as synthetic or estimated, because it is an education and research tool and not operational guidance.
 
 ## How we built it
 
-We started by researching what a controller actually juggles at once: huge volumes of flight information, congestion at airports, anomaly detection, and unpredictable disruptions. We then built:
+We started by researching what an air traffic controller actually does, and we found many places where the job could be easier. A controller has to manage huge amounts of flight information, control the flow of aircraft around congested airports, identify anomalies and respond to unpredictable disruptions, all at the same time. We built a centralized dashboard around those needs, using Claude Code to develop it.
 
-- **Frontend:** React and TypeScript on Vite, wrapping a custom 2D traffic engine with a deterministic six-hour model timeline.
-- **Simulation engine:** hypothetical scenarios with custom effects, playback and comparison.
-- **AI assistant:** Groq (`openai/gpt-oss-20b`) behind a small Node API. The server validates and size-caps everything sent to the model, and constrains scenario proposals to a strict JSON schema with allowed airports and event types. The API key never reaches the browser.
-- **Voice:** ElevenLabs for realistic spoken alerts, with a graceful fallback to the browser's built-in voice.
-- **Safety by design:** if no AI key is set, the rest of the portal still works. A Data Status panel states plainly what is and isn't connected.
-- **Deployment:** Vercel serverless API, plus automated tests for the server and voice layer.
+The frontend is written in React and TypeScript on Vite and wraps a custom 2D traffic engine with a deterministic six-hour model timeline. A simulation engine runs the hypothetical scenarios and handles playback and comparison.
+
+For the assistant, we used Groq as the language model behind a small Node API. The server validates and size-limits everything it sends to the model, and it constrains scenario proposals to a strict schema with approved airports and event types. The API key stays on the server and never reaches the browser. To make the assistant easier to use in a busy control room, we connected ElevenLabs so that alerts are spoken in a realistic human voice, and the app falls back to the browser's built-in voice when no key is set.
+
+We designed the app to degrade gracefully, so the whole portal still works if the AI key is missing, and a Data Status panel states plainly what is and is not connected. We deployed the API on Vercel and added automated tests for the server and voice layer.
 
 ## Challenges we ran into
 
-- **Making AI trustworthy in a safety-adjacent setting.** A chatbot that confidently invents things is worse than none. We bounded what the model sees, forced structured output, and required human review before any AI-proposed scenario runs.
-- **Honest data.** Real flight feeds are rate-limited and incomplete, so we built a deterministic synthetic model and labelled everything, rather than imply something is live when it isn't.
-- **Realistic geography.** State outlines needed correct multipart shapes, for example Michigan's two peninsulas and islands.
-- **Alerts without noise.** Voice alerts had to be useful, not exhausting, so only new or escalated alerts speak, with a mute toggle that remembers its setting.
+The hardest challenge was making AI trustworthy in a setting where mistakes matter. A chatbot that confidently invents answers is worse than no chatbot, so we limited what the model can see, forced its output into a fixed structure, and required human review before any AI-proposed scenario runs.
+
+We also had to be honest about data. Real flight feeds are rate-limited and incomplete, so we built a deterministic synthetic model and labelled it clearly rather than imply that anything was live when it was not. Getting the geography right took extra work too, because states like Michigan need multiple shapes for their two peninsulas and islands.
+
+Finally, we had to keep voice alerts useful instead of exhausting. We solved this by speaking only new or escalated alerts and by adding a mute button that remembers the user's choice.
 
 ## Accomplishments that we're proud of
 
-- A complete workspace (map, surface, what-if lab, degraded ops, alerts) that works end to end without any API keys.
-- An AI assistant that can't run away: its inputs are bounded, its outputs are schema-checked, and a human approves every proposal.
-- Spoken alerts designed for a controller's eyes-busy workflow.
-- A tool that is transparent about its limits.
+We are proud that AeroFlo is a complete workspace, covering the map, airport surface, what-if lab, degraded operations and alerts, and that it works end to end without any API keys. We are also proud of an AI assistant that cannot run away, because its inputs are bounded, its outputs are checked against a schema, and a human approves every proposal. The spoken alerts suit a controller whose eyes are busy, and the whole tool is transparent about its own limits.
 
 ## What we learned
 
-- In safety-critical settings, the interface must say what is real, what is simulated and what is estimated.
-- Guardrails (validation, schemas, human review) matter more than model size.
-- Rehearsal is powerful: seeing a failure cascade across a network teaches more than reading about it.
+We learned that in safety-critical settings the interface must say what is real, what is simulated and what is estimated. We learned that guardrails such as validation, schemas and human review matter more than the size of the model. We also learned that rehearsal is powerful, because watching a failure cascade across a network teaches more than reading about it.
 
 ## What's next for AeroFlo
 
-- **Live data:** connect an observed feed such as OpenSky alongside the synthetic model, with clear provenance on every aircraft.
-- **Retrieval-augmented assistant:** ground the AI in aviation rules, ATC training material and past incident reports, with citations on every answer.
-- **Richer scenarios:** replay real historical disruptions and score response plans.
-- **Training mode:** guided exercises for students and new controllers.
-- **Collaboration:** multi-user sessions so a team can run a drill together.
+Next, we want to connect an observed live data source such as OpenSky alongside the synthetic model, with clear provenance on every aircraft. We plan to ground the assistant in aviation rules, ATC training material and past incident reports using retrieval, so that every answer cites its source. We also want to replay real historical disruptions and score response plans, add a guided training mode for students and new controllers, and support multi-user sessions so a team can run a drill together.
