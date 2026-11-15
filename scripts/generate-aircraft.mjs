@@ -9,7 +9,7 @@ const materials = [
   [0.94, 0.96, 0.97, 1], // pearl fuselage
   [0.23, 0.37, 0.48, 1], // graphite-blue wing surfaces
   [0.035, 0.12, 0.18, 1], // cockpit glass and engine inlets
-  [0.72, 0.91, 0.12, 1], // restrained wing-tip safety accents
+  [0.47, 0.77, 0.99, 1], // restrained wing-tip safety accents (light blue, matches UI accent)
   [0.64, 0.74, 0.80, 1], // engine nacelles and trim
 ];
 const groups = materials.map(() => ({ position: [], normal: [] }));

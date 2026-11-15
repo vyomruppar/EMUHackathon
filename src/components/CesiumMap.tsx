@@ -49,7 +49,7 @@ function planeImage(color: string) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 const markerImage = (color: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="${color}" stroke="#071523" stroke-width="2"/><circle cx="12" cy="12" r="1.5" fill="#071523"/></svg>`)}`;
-const images = { live: planeImage("#e8f4f8"), stale: planeImage("#8498a7"), selected: planeImage("#d5ff36"), simulated: planeImage("#b39cff"), unknown: markerImage("#e8f4f8"), unknownSelected: markerImage("#d5ff36") };
+const images = { live: planeImage("#e8f4f8"), stale: planeImage("#8498a7"), selected: planeImage("#78c5fc"), simulated: planeImage("#b39cff"), unknown: markerImage("#e8f4f8"), unknownSelected: markerImage("#78c5fc") };
 
 interface MotionState {
   latitude: number;
@@ -395,7 +395,7 @@ export const CesiumMap = forwardRef<MapHandle, Props>(function CesiumMap({ kind,
       const positions = points.map(p => Cartesian3.fromDegrees(p.longitude, p.latitude, p.altitudeM ?? 0));
       let line = trailsRef.current.get(key);
       if (!line) {
-        line = viewer.entities.add({ id: key, polyline: { positions, width: id === selectedId ? 2.5 : 1, material: Color.fromCssColorString(id === selectedId ? "#d5ff36" : aircraft.find(a => a.id === id)?.kind === "simulated" ? "#b39cff88" : "#77bace88") } });
+        line = viewer.entities.add({ id: key, polyline: { positions, width: id === selectedId ? 2.5 : 1, material: Color.fromCssColorString(id === selectedId ? "#78c5fc" : aircraft.find(a => a.id === id)?.kind === "simulated" ? "#b39cff88" : "#77bace88") } });
         trailsRef.current.set(key, line);
       } else if (line.polyline) {
         line.polyline.positions = new ConstantProperty(positions);
