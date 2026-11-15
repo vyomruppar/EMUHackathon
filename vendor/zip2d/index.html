@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AIRSPACE — ATC Operations &amp; Resilience Support (JFK)</title>
+<title>AeroFlo — ATC Operations &amp; Resilience Support (JFK · LGA · EWR)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>/*CSS*/</style>
@@ -12,19 +12,20 @@
 <canvas id="cv"></canvas>
 
 <div id="brand">
-  <div class="logo">AIRSPACE</div>
-  <div class="sub">ATC operations &amp; resilience · JFK</div>
+  <div class="logo">AeroFlo</div>
+  <div class="sub">ATC operations &amp; resilience</div>
+  <div id="focsw" class="focsw" title="Focus airport: drives the queue, runways, surface view, scenarios and alerts"><button data-f="JFK" class="on">JFK</button><button data-f="LGA">LGA</button><button data-f="EWR">EWR</button></div>
 </div>
 <nav id="nav" class="pill">
   <button data-view="net" class="on">Network</button>
-  <button data-view="sfc">JFK Surface</button>
+  <button data-view="sfc">Airport Surface</button>
   <button data-view="lab">What-If Lab</button>
   <button data-view="deg">Degraded Ops</button>
   <button data-view="alr">Alerts &amp; Checks<span id="bell" class="bell"></span></button>
 </nav>
 <div id="topr">
   <div id="scenChip" class="chip"></div>
-  <div id="advisory" class="chip adv" title="AIRSPACE never issues clearances, directs aircraft or activates procedures.">ADVISORY ONLY</div>
+  <div id="advisory" class="chip adv" title="AeroFlo never issues clearances, directs aircraft or activates procedures.">ADVISORY ONLY</div>
   <button id="guide" class="chip">How it works</button>
 </div>
 

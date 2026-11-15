@@ -1,18 +1,17 @@
 {
-  "name": "airspace-portal",
+  "name": "aeroflo-portal",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/copy-cesium-assets.mjs && node scripts/generate-aircraft.mjs && node scripts/build-zip2d.mjs",
+    "predev": "node scripts/build-zip2d.mjs",
     "dev": "node scripts/dev.mjs",
-    "prebuild": "node scripts/copy-cesium-assets.mjs && node scripts/generate-aircraft.mjs && node scripts/build-zip2d.mjs",
+    "prebuild": "node scripts/build-zip2d.mjs",
     "build": "tsc -b && vite build",
     "preview": "node scripts/dev.mjs --preview",
     "test": "node --test server/*.test.mjs src/data/*.test.mjs"
   },
   "dependencies": {
-    "cesium": "1.147.0",
     "lucide-react": "0.540.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"

@@ -2,7 +2,7 @@
 /* ============================================================
    AIRSPACE — UI views: alerts, tasks, panels, What-If Lab
    ============================================================ */
-const NYSET = ['JFK_TWR', 'JFK_GND', 'N90', 'ZNY', 'LGA_TWR', 'EWR_TWR'];
+const NYSET = { includes: f => ['JFK_TWR', 'JFK_GND', 'LGA_TWR', 'LGA_GND', 'EWR_TWR', 'EWR_GND', 'N90', 'ZNY'].includes(f) };
 const ST_RANK = { ok: 0, degraded: 1, lost: 2 };
 const SRC_RECS = {
   VOICE: ['Review backup / contingency communication options per the facility-approved procedure', 'Consider asking an adjacent facility to relay time-critical instructions', 'Consider reducing the acceptance rate until voice is reliable'],
@@ -34,18 +34,29 @@ const TASK_T = {
 const OWNERS = ['Unassigned', 'Operations supervisor', 'Traffic management (TMU)', 'Tower lead', 'Ground control', 'TRACON lead', 'Tech Ops', 'Airline liaison'];
 
 /* ---------- alerts ---------- */
+const SEV_RANK = { watch: 1, info: 1, warning: 2, critical: 3 };
+/* Tell the portal about a new, re-opened or escalated alert so it can be read aloud.
+   Replays (timeline scrubs) stay quiet so a seek does not announce every past alert. */
+function announceAlert(a) {
+  if (!S.quietAlerts) tellParent({ type: 'airspace-zip-alert-raised', id: a.id, sev: a.sev, cat: a.cat, title: a.title });
+}
 function raise(key, o) {
   const t = S.sim.t; let a = S.alertByKey[key];
-  if (!a) { a = { id: S.alertSeq++, key, t, first: t, status: 'new', active: true, ...o }; S.alerts.unshift(a); S.alertByKey[key] = a; S.alertVer++; if (S.alerts.length > 120) { const x = S.alerts.pop(); delete S.alertByKey[x.key]; } }
-  else { const ch = a.sev !== o.sev; Object.assign(a, o); if (!a.active) { a.active = true; a.t = t; a.status = 'new'; a.resolved = null; S.alertVer++; } else if (ch) S.alertVer++; }
+  if (!a) { a = { id: S.alertSeq++, key, t, first: t, status: 'new', active: true, ...o }; S.alerts.unshift(a); S.alertByKey[key] = a; S.alertVer++; if (S.alerts.length > 120) { const x = S.alerts.pop(); delete S.alertByKey[x.key]; } announceAlert(a); }
+  else {
+    const ch = a.sev !== o.sev, up = (SEV_RANK[o.sev] || 0) > (SEV_RANK[a.sev] || 0);
+    Object.assign(a, o);
+    if (!a.active) { a.active = true; a.t = t; a.status = 'new'; a.resolved = null; S.alertVer++; announceAlert(a); }
+    else if (ch) { S.alertVer++; if (up) announceAlert(a); }
+  }
   a.seen = t;
 }
 function onMinute() {
-  const sim = S.sim, t = sim.t, fx = sim.fx, J = sim.A.JFK;
+  const sim = S.sim, t = sim.t, fx = sim.fx, J = sim.A[FOC];
   // congestion
   const q = J.q.length, wait = sim.jfkQueueWait(), eff = Math.round(J.adr * J.depM);
-  if (q >= 8 && wait >= 15) raise('jfk-queue', { sev: wait >= 45 ? 'critical' : wait >= 30 ? 'warning' : 'watch', cat: 'Congestion', cls: 'ESTIMATED', title: `JFK departure queue: ${q} aircraft (~${f0(wait)} min wait)`, trigger: `Modeled queue of ${q} aircraft against an effective departure rate of ${eff}/hr (published ${J.adr}/hr).`, sources: ['Surface surveillance (synthetic)', 'Flight plan data'], unc: 'Wait assumes a steady release rate; real waits vary with runway crossings, gate holds and de-icing.', recs: ['Consider departure metering / gate holds to shift queue time off the taxiways', 'Review whether a different runway configuration would raise the departure rate', 'Check whether a surface bottleneck (blocked taxiway) explains the rate'] });
-  if (J.h.length >= 6) { const mx = Math.max(...J.h.map(f => t - f.hold0)); raise('jfk-hold', { sev: J.h.length >= 16 || mx > 35 ? 'critical' : J.h.length >= 10 ? 'warning' : 'watch', cat: 'Congestion', cls: 'ESTIMATED', title: `JFK arrivals holding: ${J.h.length} aircraft (longest ${f0(mx)} min)`, trigger: `Arrival demand exceeds the effective arrival rate of ${f0(J.aar * J.arrM)}/hr (published ${J.aar}/hr).`, sources: ['ADS-B (synthetic)', 'Flight plan data'], unc: 'Fuel state is not modeled; actual diversion thresholds depend on each flight.', recs: ['Consider a ground delay program for JFK-bound flights to move delay to the ground', 'Consider advising long-holding flights to divert to the best alternate', 'Review spacing / metering on the arrival streams'] }); }
+  if (q >= 8 && wait >= 15) raise('jfk-queue', { sev: wait >= 45 ? 'critical' : wait >= 30 ? 'warning' : 'watch', cat: 'Congestion', cls: 'ESTIMATED', title: `${FOC} departure queue: ${q} aircraft (~${f0(wait)} min wait)`, trigger: `Modeled queue of ${q} aircraft against an effective departure rate of ${eff}/hr (published ${J.adr}/hr).`, sources: ['Surface surveillance (synthetic)', 'Flight plan data'], unc: 'Wait assumes a steady release rate; real waits vary with runway crossings, gate holds and de-icing.', recs: ['Consider departure metering / gate holds to shift queue time off the taxiways', 'Review whether a different runway configuration would raise the departure rate', 'Check whether a surface bottleneck (blocked taxiway) explains the rate'] });
+  if (J.h.length >= 6) { const mx = Math.max(...J.h.map(f => t - f.hold0)); raise('jfk-hold', { sev: J.h.length >= 16 || mx > 35 ? 'critical' : J.h.length >= 10 ? 'warning' : 'watch', cat: 'Congestion', cls: 'ESTIMATED', title: `${FOC} arrivals holding: ${J.h.length} aircraft (longest ${f0(mx)} min)`, trigger: `Arrival demand exceeds the effective arrival rate of ${f0(J.aar * J.arrM)}/hr (published ${J.aar}/hr).`, sources: ['ADS-B (synthetic)', 'Flight plan data'], unc: 'Fuel state is not modeled; actual diversion thresholds depend on each flight.', recs: [`Consider a ground delay program for ${FOC}-bound flights to move delay to the ground`, 'Consider advising long-holding flights to divert to the best alternate', 'Review spacing / metering on the arrival streams'] }); }
   // data / infrastructure
   const others = {};
   for (const k in fx.src) {
@@ -56,16 +67,16 @@ function onMinute() {
   }
   for (const g in others) { const [src, st] = g.split('|'), L = others[g]; raise('agg:' + g, { sev: st === 'lost' ? 'warning' : 'watch', cat: 'Data feed', cls: 'SIMULATED', title: `${L.length} other facilities: ${SRC_LABEL[src]} ${st}`, trigger: `Source monitors report ${SRC_LABEL[src]} ${st} at ${L.length} facilities outside the NY metro (e.g., ${L.slice(0, 4).map(f => FAC[f].name.replace(' Tower', '')).join(', ')}).`, sources: [SRC_LABEL[src] + ' monitors'], unc: SRC_UNC[src] + ' Impact elsewhere in the network is modeled, not confirmed.', recs: ['Expect reduced acceptance rates at affected facilities and plan traffic management accordingly'] }); }
   // weather
-  const w = fx.wx.JFK; if (w && w.f > 0.3) raise('wx-jfk', { sev: w.sev * w.f > 0.7 ? 'critical' : w.sev * w.f > 0.45 ? 'warning' : 'watch', cat: 'Weather', cls: 'SIMULATED', title: `${w.type} affecting JFK (severity ${f0(w.sev * 100)}%)`, trigger: `Simulated weather severity ${w.sev.toFixed(2)} at JFK; modeled capacity ×${sim.A.JFK.base.toFixed(2)}.`, sources: ['Weather data (simulated)'], unc: 'Timing and movement of weather are uncertain; capacity effect is an estimate.', recs: ['Review runway configuration for the current wind / visibility', 'Consider a ground delay program if the reduced rate is expected to persist', 'Brief downstream facilities on the expected acceptance rate'] });
+  const w = fx.wx[FOC]; if (w && w.f > 0.3) raise('wx-jfk', { sev: w.sev * w.f > 0.7 ? 'critical' : w.sev * w.f > 0.45 ? 'warning' : 'watch', cat: 'Weather', cls: 'SIMULATED', title: `${w.type} affecting ${FOC} (severity ${f0(w.sev * 100)}%)`, trigger: `Simulated weather severity ${w.sev.toFixed(2)} at ${FOC}; modeled capacity ×${sim.A[FOC].base.toFixed(2)}.`, sources: ['Weather data (simulated)'], unc: 'Timing and movement of weather are uncertain; capacity effect is an estimate.', recs: ['Review runway configuration for the current wind / visibility', 'Consider a ground delay program if the reduced rate is expected to persist', 'Brief downstream facilities on the expected acceptance rate'] });
   // runways
-  for (const r in (fx.rwy.JFK || {})) raise('rwy:' + r, { sev: 'warning', cat: 'Infrastructure', cls: 'SIMULATED', title: `JFK runway ${r} closed`, trigger: `Runway closure active since ${clock(fx.rwy.JFK[r])} (simulated NOTAM). Runway data feed lag: ${sim.jfk.lag} min.`, sources: ['Runway status feed', 'NOTAM data'], unc: sim.jfk.lag ? `Feed is lagging, so some positions may still show ${r} as open.` : 'Reopening time unknown.', recs: ['Confirm all positions show the closure and the active configuration', 'Review the runway configuration with the remaining runways'] });
+  for (const r in (fx.rwy[FOC] || {})) raise('rwy:' + r, { sev: 'warning', cat: 'Infrastructure', cls: 'SIMULATED', title: `${FOC} runway ${r} closed`, trigger: `Runway closure active since ${clock(fx.rwy[FOC][r])} (simulated NOTAM). Runway data feed lag: ${sim.jfk.lag} min.`, sources: ['Runway status feed', 'NOTAM data'], unc: sim.jfk.lag ? `Feed is lagging, so some positions may still show ${r} as open.` : 'Reopening time unknown.', recs: ['Confirm all positions show the closure and the active configuration', 'Review the runway configuration with the remaining runways'] });
   // throughput gap
   if (t >= 10) { const base = S.runs[0] && S.runs[0].series[t], exp = base ? base.thr : 0, obs = sim.jfkOps.length; if (exp > 20 && obs < exp * 0.7 && q >= 6) {
-    const known = [Object.keys(fx.src).some(k => NYSET.includes(k.split('|')[0])) && 'data / comms degradation', fx.wx.JFK && 'weather', fx.rwy.JFK && 'runway closure'].filter(Boolean);
-    raise('thr-gap', { sev: obs < exp * 0.5 ? 'critical' : 'warning', cat: 'Consistency', cls: 'ESTIMATED', title: `Observed JFK throughput ${obs}/hr vs expected ~${exp}/hr (${f0((obs / exp - 1) * 100)}%)`, trigger: `Rolling 60-min runway operations count is well below the expected profile while ${q} aircraft wait to depart.`, sources: ['Runway operations (synthetic)', 'Expected profile (modeled baseline)'], unc: known.length ? `Known contributing factors: ${known.join(', ')}.` : 'No active alert or source flag explains the gap — consider checking the surface (e.g., a blocked taxiway or crossing).', recs: known.length ? ['Compare against the active alerts above to confirm they explain the shortfall'] : ['Open the JFK Surface view and check taxiway congestion', 'Ask ground control / ramp for any blockage not yet reported'] });
+    const known = [Object.keys(fx.src).some(k => NYSET.includes(k.split('|')[0])) && 'data / comms degradation', fx.wx[FOC] && 'weather', fx.rwy[FOC] && 'runway closure'].filter(Boolean);
+    raise('thr-gap', { sev: obs < exp * 0.5 ? 'critical' : 'warning', cat: 'Consistency', cls: 'ESTIMATED', title: `Observed ${FOC} throughput ${obs}/hr vs expected ~${exp}/hr (${f0((obs / exp - 1) * 100)}%)`, trigger: `Rolling 60-min runway operations count is well below the expected profile while ${q} aircraft wait to depart.`, sources: ['Runway operations (synthetic)', 'Expected profile (modeled baseline)'], unc: known.length ? `Known contributing factors: ${known.join(', ')}.` : 'No active alert or source flag explains the gap — consider checking the surface (e.g., a blocked taxiway or crossing).', recs: known.length ? ['Compare against the active alerts above to confirm they explain the shortfall'] : [`Open the Surface view and check taxiway congestion`, 'Ask ground control / ramp for any blockage not yet reported'] });
   } }
   // ripple
-  if (t % 3 === 0) { const rp = sim.ripple(); Object.entries(rp).sort((a, b) => b[1].sum - a[1].sum).slice(0, 3).forEach(([id, r]) => { if (r.sum > 90) raise('rip:' + id, { sev: r.sum > 400 ? 'warning' : 'watch', cat: 'Network ripple', cls: 'ESTIMATED', title: `Delay from JFK propagating to ${id} (hop ${r.hop})`, trigger: `${r.n} departures from ${id} in the last 2 h were late because their aircraft arrived late from JFK-linked legs, and ${r.inb || 0} more late aircraft are inbound (${f0(r.sum)} delay-min total, estimated).`, sources: ['Flight schedules (synthetic)', 'Aircraft rotation model'], unc: 'Rotation links are modeled from synthetic tail assignments; real aircraft swaps would change this.', recs: [`Anticipate reduced departure punctuality at ${id}`, 'Consider swapping aircraft or re-sequencing the affected rotation'] }); }); }
+  if (t % 3 === 0) { const rp = sim.ripple(); Object.entries(rp).sort((a, b) => b[1].sum - a[1].sum).slice(0, 3).forEach(([id, r]) => { if (r.sum > 90) raise('rip:' + id, { sev: r.sum > 400 ? 'warning' : 'watch', cat: 'Network ripple', cls: 'ESTIMATED', title: `Delay from ${FOC} propagating to ${id} (hop ${r.hop})`, trigger: `${r.n} departures from ${id} in the last 2 h were late because their aircraft arrived late from ${FOC}-linked legs, and ${r.inb || 0} more late aircraft are inbound (${f0(r.sum)} delay-min total, estimated).`, sources: ['Flight schedules (synthetic)', 'Aircraft rotation model'], unc: 'Rotation links are modeled from synthetic tail assignments; real aircraft swaps would change this.', recs: [`Anticipate reduced departure punctuality at ${id}`, 'Consider swapping aircraft or re-sequencing the affected rotation'] }); }); }
   // consistency findings from the engine
   while (S.incIdx < sim.incons.length) {
     const e = sim.incons[S.incIdx++]; if (e.t < 0) continue;
@@ -96,7 +107,7 @@ function evalTasks(sim) {
 }
 
 /* ---------- panel skeletons (static; created once) ---------- */
-const scenQuick = () => Object.values(SCEN).map(s => `<button data-q="${s.id}">${esc(s.name)}</button>`).join('');
+const scenQuick = () => Object.values(SCEN).map(s => `<button data-q="${s.id}">${esc(s.name)}</button>`).join('') + `<button data-q="__clear" style="border-style:dashed">✕ Clear scenario</button>`;
 $('#netL').innerHTML = `
   <div id="nlSel"></div>
   <div class="sec"><h3>Layers</h3><div class="tog" id="nlLayers">${['jfk:JFK · LGA · EWR flights only', 'sectors:ARTCC sectors', 'wx:Rain & snow', 'cloud:Clouds', 'wind:Winds aloft', 'storm:Storm cells', 'xw:Airport weather', 'routes:All routes', 'aircraft:Aircraft', 'rings:Ripple', 'labels:Labels'].map(x => { const [k, l] = x.split(':'); return `<button data-l="${k}" class="${S.layers[k] ? 'on' : ''}">${l}</button>`; }).join('')}</div><label class="row" style="margin-top:8px;gap:8px;font-size:11.5px;color:var(--mut)">Weather strength<input id="wxAmt" type="range" min="0" max="1" step="0.05" value="${S.wxAmt}" style="flex:1"></label><div class="wxkey2"><div><i class="hz"></i><span><b>Rain &amp; snow</b>: <b style="color:#46c86e">green</b> light, <b style="color:#ebd746">yellow</b> moderate, <b style="color:#ff8c32">orange</b> and <b style="color:#f03c46">red</b> heavy.</span></div><div><i class="cl"></i><span><b>Clouds</b>: grey-white. Thicker means more cover.</span></div><div><i class="wd"></i><span><b>Winds aloft</b>: moving streaks at cruise altitude. Longer and warmer is faster; speeds in kt appear when zoomed in.</span></div><div><i class="st"></i><span><b>Storm cells</b>: ring with a bolt marks a severe thunderstorm.</span></div><div><i class="xa"></i><span><b>Airport weather</b> (standard station plot): circle fill = cloud cover, ring color = flight category, barb points to where the wind comes from (flag 50 kt, line 10, half 5), number = °F, symbol = rain, snow, fog or T-storm. <b style="color:#ff4d5e">XW</b> = crosswind.</span></div><div><i class="fr"></i><span><b>Blue line with triangles</b>: cold front, moving east.</span></div></div></div>
@@ -106,7 +117,7 @@ $('#netL').innerHTML = `
     <div>${tag('ESTIMATED')} queues, ETAs, capacity, ripple</div><div>${tag('SIMULATED')} scenario failures &amp; weather</div></div></div>
   <div class="note">Map is a schematic. Sector regions are nearest-centre approximations, not official ARTCC boundaries.</div>`;
 $('#netR').innerHTML = `
-  <div class="sec"><h3>Try a scenario <span class="sp"></span>${tag('SIMULATED')}</h3><div class="tog" id="nrQuick">${scenQuick()}</div><div class="note">Loads the scenario with default parameters into the live sim. Build and compare your own in the What-If Lab.</div></div>
+  <div class="sec"><h3>Try a scenario <span class="sp"></span>${tag('SIMULATED')}</h3><div class="tog" id="nrQuick">${scenQuick()}</div><div class="note">Loads the scenario with default parameters into the simulation timeline. Build and compare your own in the What-If Lab.</div></div>
   <div class="sec" id="nrRip"></div><div class="sec" id="nrAl"></div>
   <div class="sec"><button class="btn" id="nrOpenAl" style="width:100%">Open alerts &amp; consistency checks →</button></div>`;
 $('#sfcL').innerHTML = `<div id="slA"></div><div id="slW"></div><div id="slB"></div><div id="slC"></div>`;
@@ -116,7 +127,7 @@ $('#netL').addEventListener('click', e => {
   const v = e.target.closest('[data-v]'); if (v) { v.dataset.v === 'us' ? fitUS() : v.dataset.v === 'ny' ? focusNY() : focusAp(S.sel); }
 });
 $('#wxAmt').oninput = e => { S.wxAmt = +e.target.value; };
-$('#nrQuick').onclick = e => { const b = e.target.closest('[data-q]'); if (!b) return; const c = newCfg(); c.stack = [mkInst(b.dataset.q)]; S.cfg = c; newSim(c); toast('Loaded: ' + SCEN[b.dataset.q].name); };
+$('#nrQuick').onclick = e => { const b = e.target.closest('[data-q]'); if (!b) return; if (b.dataset.q === '__clear') { const c0 = newCfg(); S.cfg = c0; newSim(c0); toast('Scenario cleared. Back to normal operations.'); return; } const c = newCfg(); c.stack = [mkInst(b.dataset.q)]; S.cfg = c; newSim(c); toast('Loaded: ' + SCEN[b.dataset.q].name); };
 $('#nrOpenAl').onclick = () => setView('alr');
 function toast(msg) { const t = document.createElement('div'); t.className = 'chip'; t.style.cssText = 'position:fixed;left:50%;top:58px;transform:translateX(-50%);z-index:60;color:var(--text);border-color:#3d6fb0'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
 
@@ -125,6 +136,8 @@ function refreshPanels(force) {
   const sim = S.sim, v = S.view;
   const crit = S.alerts.filter(a => a.active && a.status !== 'rejected'), nc = crit.filter(a => a.sev === 'critical').length, nw = crit.filter(a => a.sev === 'warning').length, bell = $('#bell');
   bell.className = 'bell' + (nc ? ' show' : nw ? ' show w' : crit.length ? ' show i' : ''); bell.textContent = nc || nw || crit.length || '';
+  const alertState = `${nc}/${nw}/${crit.length}`;
+  if (alertState !== S.lastAlertState) { S.lastAlertState = alertState; tellParent({ type: 'airspace-zip-alerts', critical: nc, warning: nw, total: crit.length }); }
   if (v === 'net') { renderNetSel(sim); renderNetRip(sim); }
   else if (v === 'sfc') renderSurface(sim);
   else if (v === 'deg') renderDeg(sim, force);
@@ -133,7 +146,7 @@ function refreshPanels(force) {
 }
 function airportFacilityChips(id) {
   const a = AP[id], out = [];
-  for (const f of [id + '_TWR', a.tracon, a.ctr, id === 'JFK' ? 'JFK_GND' : null].filter(Boolean)) for (const s of SRCS) { const r = S.sim.fx.src[f + '|' + s]; if (r) out.push(`<span class="cell ${r.restoring ? 'restoring' : r.st}">${esc(f.replace('_TWR', ''))} ${SRC_SHORT[s]}</span>`); }
+  for (const f of [id + '_TWR', a.tracon, a.ctr, id === FOC ? FOC + '_GND' : null].filter(Boolean)) for (const s of SRCS) { const r = S.sim.fx.src[f + '|' + s]; if (r) out.push(`<span class="cell ${r.restoring ? 'restoring' : r.st}">${esc(f.replace('_TWR', ''))} ${SRC_SHORT[s]}</span>`); }
   return out.length ? `<div class="tog" style="margin-top:8px;gap:4px">${out.slice(0, 10).join('')}</div>` : '';
 }
 function renderNetSel(sim) {
@@ -145,21 +158,21 @@ function renderNetSel(sim) {
   <div style="margin-top:6px">${tag('ESTIMATED')} <span class="muted" style="font-size:11px">rates, queue and delay are modeled</span></div>${airportFacilityChips(a.id)}${wxLine(a.id)}</div>`);
 }
 function renderNetRip(sim) {
-  const rp = sim.ripple(), J = sim.A.JFK, ent = Object.entries(rp).sort((a, b) => b[1].sum - a[1].sum);
+  const rp = sim.ripple(), J = sim.A[FOC], ent = Object.entries(rp).sort((a, b) => b[1].sum - a[1].sum);
   const tot = ent.reduce((s, [, r]) => s + r.sum, 0), hops = [1, 2, 3].map(h => { const L = ent.filter(([, r]) => (h === 3 ? r.hop >= 3 : r.hop === h)); return { h, n: L.length, s: L.reduce((x, [, r]) => x + r.sum, 0) }; });
   const mx = Math.max(60, ...ent.map(([, r]) => r.sum));
   const P = sectorPressure(sim), top = Object.entries(P).sort((a, b) => b[1] - a[1]).filter(x => x[1] > 0.05).slice(0, 4);
-  setHTML($('#nrRip'), `<h3>Ripple from JFK ${tag('ESTIMATED')}</h3>
-  <div class="kv"><div><label>JFK queue wait</label><b>${f0(sim.jfkQueueWait())}</b> <small>min</small></div><div><label>Airports affected</label><b>${ent.length}</b> <small>downstream</small></div></div>
+  setHTML($('#nrRip'), `<h3>Ripple from ${FOC} ${tag('ESTIMATED')}</h3>
+  <div class="kv"><div><label>${FOC} queue wait</label><b>${f0(sim.jfkQueueWait())}</b> <small>min</small></div><div><label>Airports affected</label><b>${ent.length}</b> <small>downstream</small></div></div>
   ${ent.length ? `<div class="row" style="margin:9px 0 6px;gap:6px">${hops.map(h => `<div class="card grow" style="padding:6px 8px"><div class="muted" style="font-size:10px">HOP ${h.h}${h.h === 3 ? '+' : ''}</div><b class="mono">${h.n}</b> <span class="muted" style="font-size:11px">apts · ${f0(h.s)} min</span></div>`).join('')}</div>
   <div class="list" style="gap:5px">${ent.slice(0, 7).map(([id, r]) => `<div><div class="row sb" style="font-size:12px"><span><b>${id}</b> <span class="muted">hop ${r.hop} · ${r.n} late deps${r.inb ? ' · ' + r.inb + ' inbound late' : ''}</span></span><span class="mono">${f0(r.sum)} min</span></div><div class="bar ${sevOf(r.sum, 80, 250, 600)}"><i style="width:${r.sum / mx * 100}%"></i></div></div>`).join('')}</div>
-  <div class="note">Delay-minutes from departures made late by an aircraft that arrived late from a JFK-affected leg, plus late aircraft still inbound. Delay reaches distant airports hours later. Orange arcs show the busiest links.</div>` : `<div class="empty">No measurable delay propagation from JFK right now. Load a scenario above (or scrub the timeline into a scenario window) to see how a JFK disruption spreads through aircraft rotations and connecting airports.</div>`}
+  <div class="note">Delay-minutes from departures made late by an aircraft that arrived late from a ${FOC}-affected leg, plus late aircraft still inbound. Delay reaches distant airports hours later. Orange arcs show the busiest links.</div>` : `<div class="empty">No measurable delay propagation from ${FOC} right now. Load a scenario above (or scrub the timeline into a scenario window) to see how a ${FOC} disruption spreads through aircraft rotations and connecting airports.</div>`}
   ${top.length ? `<h3 style="margin-top:14px">Sector (ARTCC) pressure</h3><div class="list" style="gap:5px">${top.map(([id, p]) => `<div class="row sb" style="font-size:12px"><span>${id} <span class="muted">${CTR[id].name.replace(' Center', '')}</span></span><span style="width:90px"><span class="bar ${sevOf(p, .1, .35, .65)}" style="display:block"><i style="width:${p * 100}%"></i></span></span></div>`).join('')}</div>` : ''}`);
   const act = S.alerts.filter(a => a.active).slice(0, 3);
   setHTML($('#nrAl'), `<h3>Latest active alerts</h3>${act.length ? `<div class="list">${act.map(a => `<div class="card ${a.sev === 'critical' ? 'crit' : a.sev === 'warning' ? 'warn' : ''}"><div class="row"><span class="sev ${a.sev}"></span><b style="font-size:12px">${esc(a.title)}</b></div><div class="muted" style="font-size:11px;margin-top:2px">${a.cat} · since ${clock(a.t)}</div></div>`).join('')}</div>` : '<div class="empty">No active alerts.</div>'}`);
 }
 function renderSurface(sim) {
-  const J = sim.jfk, A = sim.A.JFK, cong = surfaceCong(sim), t = sim.t;
+  const J = sim.jfk, A = sim.A[FOC], cong = surfaceCong(sim), t = sim.t;
   const nom = 24, bars = RWY.map(r => { const n = (sim.rwyOps[r] || []).length, closed = J.closedTrue.has(r); return `<div><div class="row sb" style="font-size:12px"><span class="mono">${r} ${closed ? '<span class="up">CLOSED</span>' : ''}</span><span class="mono muted">${n} ops/hr</span></div><div class="bar ${closed ? 'crit' : sevOf(n / nom, .6, .9, 1.15)}"><i style="width:${clamp(n / nom, 0, 1) * 100}%"></i></div></div>`; }).join('');
   setHTML($('#slA'), `<div class="sec"><h3>Runway configuration ${tag('ESTIMATED')}</h3><h2>${CFG_RWY[J.cfg].name}</h2>
   <div class="sub2" style="margin:2px 0 8px">Arrivals <b style="color:var(--info)">${J.arr.join(', ')}</b> · Departures <b style="color:var(--watch)">${J.dep.join(', ')}</b></div>
@@ -169,7 +182,7 @@ function renderSurface(sim) {
   setHTML($('#slW'), wxWindBlock());
   setHTML($('#slB'), `<div class="sec"><h3>Runway utilization (60 min)</h3><div class="list" style="gap:7px">${bars}</div></div>`);
   setHTML($('#slC'), `<div class="sec"><h3>Taxiway congestion ${tag('ESTIMATED')}</h3><div class="list" style="gap:7px">${TWYS.map(w => { const c = cong[w.id]; return `<div><div class="row sb" style="font-size:12px"><span>${esc(w.id)}</span><span class="mono" style="color:${congCol(c)}">${f0(c * 100)}%</span></div><div class="bar"><i style="width:${c * 100}%;background:${congCol(c)}"></i></div></div>`; }).join('')}</div></div>`);
-  const dq = A.q.slice(0, 11), inb = sim.tails.filter(f => f.d === 'JFK' && f.st === 'enroute').sort((a, b) => (a.dep + a.dur) - (b.dep + b.dur)).slice(0, 9);
+  const dq = A.q.slice(0, 11), inb = sim.tails.filter(f => f.d === FOC && f.st === 'enroute').sort((a, b) => (a.dep + a.dur) - (b.dep + b.dur)).slice(0, 9);
   const holds = A.h.slice(0, 5);
   setHTML($('#srA'), `<div class="sec"><h3>Departure queue <span class="sp"></span>${tag('SYNTHETIC')}${tag('ESTIMATED')}</h3>${dq.length ? `<table><tr><th>Flight</th><th>To</th><th>Waiting</th><th>Rwy*</th></tr>${dq.map((f, i) => `<tr><td class="mono">${f.cs}</td><td class="mono">${f.d}</td><td class="mono" style="color:${t - f.qEnter > 25 ? 'var(--crit)' : t - f.qEnter > 10 ? 'var(--watch)' : 'inherit'}">${f0(t - f.qEnter)}m</td><td class="mono muted">${J.dep.length ? J.dep[i % J.dep.length] : '-'}</td></tr>`).join('')}</table><div class="muted" style="font-size:11px;margin-top:4px">${A.q.length > 11 ? `+${A.q.length - 11} more · ` : ''}*estimated runway split</div>` : '<div class="empty">No aircraft waiting.</div>'}</div>`);
   setHTML($('#srB'), `<div class="sec"><h3>Arrival flow <span class="sp"></span>${tag('ESTIMATED')}</h3><table><tr><th>Flight</th><th>From</th><th>ETA</th><th>Status</th></tr>${holds.map(f => `<tr><td class="mono">${f.cs}</td><td class="mono">${f.from || f.o}</td><td class="mono">—</td><td><span class="pillst prog">HOLD ${f0(t - f.hold0)}m</span></td></tr>`).join('')}${inb.map(f => `<tr><td class="mono">${f.cs}</td><td class="mono">${f.from || f.o}</td><td class="mono">${f0(f.dep + f.dur - t)}m</td><td><span class="pillst open">INBOUND</span></td></tr>`).join('')}</table></div>`);
@@ -187,11 +200,11 @@ const CAPS = [
   { n: 'Facility power', s: ['POWER'], fb: 'Backup-power runtime check; pre-brief next steps.' },
 ];
 function worstSt(sim, srcs, all) {
-  const rs = srcs.map(s => Math.max(...['JFK_TWR', 'N90', 'ZNY'].map(f => ST_RANK[(sim.fx.src[f + '|' + s] || { st: 'ok' }).st])));
+  const rs = srcs.map(s => Math.max(...[FOC + '_TWR', 'N90', 'ZNY'].map(f => ST_RANK[(sim.fx.src[f + '|' + s] || { st: 'ok' }).st])));
   const mx = Math.max(...rs), mn = Math.min(...rs); if (all) return mn === 2 ? 'lost' : mx > 0 ? 'degraded' : 'ok'; return ['ok', 'degraded', 'lost'][mx];
 }
 function renderDeg(sim, force) {
-  const fx = sim.fx, t = sim.t, rows = ['JFK_TWR', 'JFK_GND', 'N90', 'ZNY', 'LGA_TWR', 'EWR_TWR', 'ZBW', 'ZDC'];
+  const fx = sim.fx, t = sim.t, rows = [...new Set([FOC + '_TWR', FOC + '_GND', 'N90', 'ZNY', 'JFK_TWR', 'LGA_TWR', 'EWR_TWR', 'ZBW', 'ZDC'])];
   const cell = (fac, src) => { const r = fx.src[fac + '|' + src]; if (!r) return `<td><div class="cell ok">OK</div></td>`; const age = Math.max(0, t - r.onset); return `<td><div class="cell ${r.restoring ? 'restoring' : r.st}">${r.restoring ? 'RESTORING' : r.st === 'lost' ? 'LOST' : 'DEGRADED'}<br><span style="opacity:.75">${f0(age)}m</span></div></td>`; };
   const rest = FACILITIES.filter(f => !rows.includes(f.id)), agg = src => { const L = rest.filter(f => fx.src[f.id + '|' + src]); const lost = L.filter(f => fx.src[f.id + '|' + src].st === 'lost').length; return `<td><div class="cell ${L.length ? (lost ? 'lost' : 'degraded') : 'ok'}">${L.length ? L.length + ' fac.' : 'OK'}</div></td>`; };
   setHTML($('#degMat'), `<h3>Information sources by facility <span class="sp"></span>${tag('SIMULATED')}<span class="muted" style="text-transform:none;letter-spacing:0">age = minutes since the status changed</span></h3>
@@ -199,7 +212,7 @@ function renderDeg(sim, force) {
   const unrel = [], avail = [];
   for (const s of SRCS) { const w = worstSt(sim, [s]); (w === 'ok' ? avail : unrel).push(w === 'ok' ? SRC_LABEL[s] : `${SRC_LABEL[s]} <span class="${w === 'lost' ? 'up' : 'muted'}">(${w})</span>`); }
   const open = S.tasks.filter(k => k.status !== 'Done').length;
-  setHTML($('#degCap'), `<h3>What still works at JFK ${tag('ESTIMATED')}</h3><div class="list" style="gap:6px">${CAPS.map(c => { const w = worstSt(sim, c.s, c.all); const p = w === 'ok' ? ['avail', 'AVAILABLE'] : w === 'degraded' ? ['limited', 'LIMITED'] : ['unavail', 'UNAVAILABLE']; return `<div class="card" style="padding:7px 10px"><div class="row sb"><b style="font-size:12px">${c.n}</b><span class="pillst ${p[0]}">${p[1]}</span></div>${w !== 'ok' ? `<div class="muted" style="font-size:11px;margin-top:3px">Fallback to consider: ${c.fb}</div>` : ''}</div>`; }).join('')}</div>
+  setHTML($('#degCap'), `<h3>What still works at ${FOC} ${tag('ESTIMATED')}</h3><div class="list" style="gap:6px">${CAPS.map(c => { const w = worstSt(sim, c.s, c.all); const p = w === 'ok' ? ['avail', 'AVAILABLE'] : w === 'degraded' ? ['limited', 'LIMITED'] : ['unavail', 'UNAVAILABLE']; return `<div class="card" style="padding:7px 10px"><div class="row sb"><b style="font-size:12px">${c.n}</b><span class="pillst ${p[0]}">${p[1]}</span></div>${w !== 'ok' ? `<div class="muted" style="font-size:11px;margin-top:3px">Fallback to consider: ${c.fb}</div>` : ''}</div>`; }).join('')}</div>
   <div class="note"><b>Reliable:</b> ${avail.join(', ') || 'none'}<br><b>Unreliable / missing:</b> ${unrel.join(', ') || 'none'}<br><b>Human attention needed:</b> ${open} open task${open === 1 ? '' : 's'}. Fallbacks are generic; use facility-approved procedures.</div>`);
   // tasks (only rebuild when changed)
   const tb = $('#degTask'); if (force || tb._v !== S.taskVer || !tb._built) { tb._v = S.taskVer; tb._built = true; renderTasks(); }
@@ -233,9 +246,9 @@ function renderAlerts(sim, force) {
   const gauge = (l, v, c) => `<div><div class="row sb" style="font-size:12px"><span>${l}</span><span class="mono">${f0(v * 100)}%</span></div><div class="bar ${c}"><i style="width:${clamp(v, 0, 1) * 100}%"></i></div></div>`;
   const L = [...sim.ledger].reverse().slice(0, 14), inc = [...sim.incons].filter(e => e.t >= 0).reverse().slice(0, 6);
   setHTML($('#alrLedger'), `<h3>Instruction ↔ activity consistency ${tag('SIMULATED')}</h3>
-  <div class="kv"><div><label>Throughput observed</label><b>${obs}</b> <small>/ ${exp || '—'} expected</small></div><div><label>Dep queue</label><b>${sim.A.JFK.q.length}</b> <small>aircraft</small></div></div>
+  <div class="kv"><div><label>Throughput observed</label><b>${obs}</b> <small>/ ${exp || '—'} expected</small></div><div><label>Dep queue</label><b>${sim.A[FOC].q.length}</b> <small>aircraft</small></div></div>
   <div class="list" style="gap:7px;margin:10px 0">${gauge('Voice / datalink quality', cq, cq > 0.9 ? 'ok' : cq > 0.6 ? 'watch' : 'crit')}${gauge('Surveillance confidence', sq, sq > 0.9 ? 'ok' : sq > 0.65 ? 'watch' : 'crit')}</div>
-  <h3>Recent JFK instructions vs observed ${tag('SYNTHETIC')}</h3>
+  <h3>Recent ${FOC} instructions vs observed ${tag('SYNTHETIC')}</h3>
   <table><tr><th>Time</th><th>Flight</th><th>Type</th><th>Instructed</th><th>Observed</th><th></th></tr>${L.map(r => `<tr class="${r.bad ? 'bad' : ''}"><td class="mono">${clock(r.t)}</td><td class="mono">${r.cs}</td><td class="mono muted">${r.type}</td><td class="mono">${r.instr}</td><td class="mono">${r.obs}</td><td>${r.bad ? '<span class="up">✗</span>' : /unverified/.test(r.obs) ? '<span class="muted">?</span>' : '<span class="down">✓</span>'}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Waiting for activity…</td></tr>'}</table>
   <h3 style="margin-top:14px">Discrepancy findings</h3>${inc.length ? `<div class="list">${inc.map(e => `<div class="card ${e.sev === 'critical' ? 'crit' : e.sev === 'warning' ? 'warn' : ''}" style="padding:7px 10px"><div class="row"><span class="sev ${e.sev}"></span><b style="font-size:12px">${e.cs}</b><span class="muted" style="font-size:11px">${clock(e.t)}</span></div><div style="font-size:12px;margin-top:2px">${esc(e.detail)}</div><div class="muted" style="font-size:11px;margin-top:2px">Uncertainty: ${esc(e.unc)}</div></div>`).join('')}</div>` : '<div class="empty">No discrepancies detected. Findings appear when comms or data degrade, or a runway closure is not yet reflected in the data feed.</div>'}`);
   const lg = $('#alrLog'); if (force || lg._v !== S.alertVer + ':' + S.alertSel + ':' + S.decisions.length || !lg._built) { lg._v = S.alertVer + ':' + S.alertSel + ':' + S.decisions.length; lg._built = true; renderDetail(); }
@@ -252,7 +265,7 @@ function renderDetail() {
   $('#alrLog').innerHTML = `<h3>Alert detail</h3>${a ? `<div class="card ${a.sev === 'critical' ? 'crit' : a.sev === 'warning' ? 'warn' : ''}"><div class="row"><span class="sev ${a.sev}"></span><b>${esc(a.title)}</b></div><div class="row" style="margin:6px 0;gap:6px">${tag(a.cls)}<span class="muted" style="font-size:11px">${a.cat} · raised ${clock(a.first)}</span></div>
   <div class="field"><label>What triggered it</label><div style="font-size:12px">${esc(a.trigger)}</div></div><div class="field"><label>Sources it relies on</label><div style="font-size:12px">${a.sources.map(esc).join(' · ')}</div></div><div class="field"><label>Where uncertainty remains</label><div style="font-size:12px">${esc(a.unc)}</div></div>
   <div class="field"><label>Options for human review (advisory)</label>${a.recs.map((r, i) => `<div style="font-size:12px;margin:4px 0">• ${esc(r)}<div class="row" style="margin-top:3px"><button class="btn sm" data-d="accepted" data-i="${i}">Accept</button><button class="btn sm" data-d="deferred" data-i="${i}">Defer</button><button class="btn sm dng" data-d="rejected" data-i="${i}">Reject</button></div></div>`).join('')}</div>
-  <div class="note">Accepting records a human decision only. AIRSPACE does not issue clearances, direct aircraft or activate procedures.</div></div>` : '<div class="empty">Select an alert to see what triggered it, which sources it uses and where uncertainty remains.</div>'}
+  <div class="note">Accepting records a human decision only. AeroFlo does not issue clearances, direct aircraft or activate procedures.</div></div>` : '<div class="empty">Select an alert to see what triggered it, which sources it uses and where uncertainty remains.</div>'}
   <h3 style="margin-top:14px">Human review log</h3>${S.decisions.length ? `<table>${S.decisions.slice(-12).reverse().map(d => `<tr><td class="mono">${clock(d.t)}</td><td><span class="pillst ${d.d === 'accepted' ? 'done' : d.d === 'rejected' ? 'blocked' : 'prog'}">${d.d.toUpperCase()}</span></td><td style="font-size:11.5px">${esc(d.rec)}<div class="muted">${esc(d.title)}</div></td></tr>`).join('')}</table>` : '<div class="empty">No decisions recorded.</div>'}`;
 }
 $('#alrFeed').addEventListener('click', e => { const f = e.target.closest('#alrF button'); if (f) { alrFilter = f.dataset.f; refreshPanels(true); return; } const c = e.target.closest('[data-al]'); if (c) { S.alertSel = +c.dataset.al; refreshPanels(true); } });
@@ -272,8 +285,8 @@ function paramField(inst, q) {
   return `<div class="field"><label>${q.label}</label><div class="rv"><input type="range" min="${q.min}" max="${q.max}" step="${q.step}" value="${v}" data-uid="${inst.uid}" data-p="${q.key}" data-num="1"><span class="mono" style="width:38px">${(+v).toFixed(2)}</span></div></div>`;
 }
 const METRICS = [
-  ['avgJfkDep', 'Avg JFK departure delay', v => f1(v) + ' min', 'lo'], ['avgJfkHold', 'Avg JFK airborne hold', v => f1(v) + ' min', 'lo'], ['avgNet', 'Network avg departure delay', v => f1(v) + ' min', 'lo'],
-  ['peakQ', 'Peak JFK departure queue', v => f0(v), 'lo'], ['peakH', 'Peak JFK holding', v => f0(v), 'lo'], ['thr', 'JFK throughput in window', v => f0(v) + '/hr', 'hi'],
+  ['avgJfkDep', 'Avg departure delay (focus airport)', v => f1(v) + ' min', 'lo'], ['avgJfkHold', 'Avg airborne hold (focus airport)', v => f1(v) + ' min', 'lo'], ['avgNet', 'Network avg departure delay', v => f1(v) + ' min', 'lo'],
+  ['peakQ', 'Peak departure queue (focus airport)', v => f0(v), 'lo'], ['peakH', 'Peak holding (focus airport)', v => f0(v), 'lo'], ['thr', 'Focus-airport throughput in window', v => f0(v) + '/hr', 'hi'],
   ['late', 'Departures >15 min late', v => f0(v), 'lo'], ['longHolds', 'Arrivals held >10 min', v => f0(v), 'lo'], ['diverted', 'Diversions', v => f0(v), 'lo'], ['impacted', 'Other airports >15 min avg', v => f0(v), 'lo'],
   ['groundMin', 'Ground delay assigned (flight-hrs)', v => f0(v / 60), null], ['recovery', 'Time to recover after scenario', v => v == null ? '—' : f0(v) + ' min', 'lo'], ['peakRisk', 'Peak risk index (0–100)', v => f0(v), 'lo'],
 ];
@@ -294,7 +307,7 @@ function renderLab() {
   <h3 style="margin-top:16px">Advisory responses to test <span class="sp"></span><span class="muted" style="text-transform:none;letter-spacing:0">activation time is minutes after the first scenario starts</span></h3>
   <div class="list" style="gap:5px">${MITS.map(m => { const c = cfg.mit[m.key]; return `<div class="card" style="padding:7px 10px"><div class="row"><input type="checkbox" data-m="${m.key}" ${c.on ? 'checked' : ''}><div class="grow"><b style="font-size:12.5px">${m.name}</b><div class="muted" style="font-size:11px">${m.desc}</div></div><span class="muted" style="font-size:11px">at +</span><input type="number" min="0" max="300" value="${c.at}" data-ma="${m.key}" style="width:58px">${m.extra ? `<span class="muted" style="font-size:11px">for</span><input type="number" min="5" max="240" value="${c.dur}" data-md="${m.key}" style="width:58px">` : ''}</div></div>`; }).join('')}</div>
   <div class="row" style="margin:14px 0;flex-wrap:wrap"><input id="runName" placeholder="Name this run (optional)" value="${esc(runName)}" style="width:210px"><button class="btn pri" id="bRun">Run &amp; save for comparison</button><button class="btn" id="bApply">Apply to live sim</button><button class="btn" id="bClear">Clear stack</button><button class="btn" id="bCopy" title="Copy this configuration as JSON">Copy config</button></div>
-  <h3>Compare runs <span class="sp"></span><select id="cmpM">${[['q', 'JFK departure queue'], ['h', 'JFK airborne holding'], ['thr', 'JFK ops per hour'], ['net', 'Network avg delay'], ['risk', 'Risk index']].map(([k, l]) => `<option value="${k}"${S.cmp === k ? ' selected' : ''}>${l}</option>`).join('')}</select></h3>
+  <h3>Compare runs <span class="sp"></span><select id="cmpM">${[['q', '${FOC} departure queue'], ['h', '${FOC} airborne holding'], ['thr', '${FOC} ops per hour'], ['net', 'Network avg delay'], ['risk', 'Risk index']].map(([k, l]) => `<option value="${k}"${S.cmp === k ? ' selected' : ''}>${l}</option>`).join('')}</select></h3>
   <div style="height:190px;position:relative"><canvas id="labChart" style="width:100%;height:100%"></canvas></div>
   <div id="labTable" style="margin-top:10px;overflow:auto"></div>`;
   renderCompare();
@@ -358,10 +371,10 @@ const EFF_TYPES = { src: 'Source outage', wx: 'Weather', rwy: 'Runway closed', c
 function effRow(type, v = {}) {
   const opt = (arr, sel) => arr.map(o => `<option${o === sel ? ' selected' : ''}>${o}</option>`).join('');
   let a = '', b = '', c = '';
-  if (type === 'src') { a = `<select data-e="a">${FACILITIES.map(f => `<option value="${f.id}"${f.id === (v.fac || 'JFK_TWR') ? ' selected' : ''}>${f.name}</option>`).join('')}</select>`; b = `<select data-e="b">${SRCS.map(s => `<option value="${s}"${s === (v.src || 'VOICE') ? ' selected' : ''}>${SRC_LABEL[s]}</option>`).join('')}</select>`; c = `<select data-e="c">${opt(['lost', 'degraded'], v.st)}</select>`; }
-  if (type === 'wx') { a = `<select data-e="a">${AIRPORTS.map(x => `<option${x.id === (v.ap || 'JFK') ? ' selected' : ''}>${x.id}</option>`).join('')}</select>`; b = `<select data-e="b">${opt(Object.keys(WX_LOSS), v.type)}</select>`; c = `<input type="range" data-e="c" min="0.1" max="1" step="0.05" value="${v.sev ?? 0.7}">`; }
+  if (type === 'src') { a = `<select data-e="a">${FACILITIES.map(f => `<option value="${f.id}"${f.id === (v.fac || FOC + '_TWR') ? ' selected' : ''}>${f.name}</option>`).join('')}</select>`; b = `<select data-e="b">${SRCS.map(s => `<option value="${s}"${s === (v.src || 'VOICE') ? ' selected' : ''}>${SRC_LABEL[s]}</option>`).join('')}</select>`; c = `<select data-e="c">${opt(['lost', 'degraded'], v.st)}</select>`; }
+  if (type === 'wx') { a = `<select data-e="a">${AIRPORTS.map(x => `<option${x.id === (v.ap || FOC) ? ' selected' : ''}>${x.id}</option>`).join('')}</select>`; b = `<select data-e="b">${opt(Object.keys(WX_LOSS), v.type)}</select>`; c = `<input type="range" data-e="c" min="0.1" max="1" step="0.05" value="${v.sev ?? 0.7}">`; }
   if (type === 'rwy') { a = `<select data-e="a">${opt(RWY, v.rwy)}</select>`; }
-  if (type === 'cap') { a = `<select data-e="a">${AIRPORTS.map(x => `<option${x.id === (v.ap || 'JFK') ? ' selected' : ''}>${x.id}</option>`).join('')}</select>`; c = `<input type="range" data-e="c" min="0.1" max="1" step="0.05" value="${v.m ?? 0.6}">`; }
+  if (type === 'cap') { a = `<select data-e="a">${AIRPORTS.map(x => `<option${x.id === (v.ap || FOC) ? ' selected' : ''}>${x.id}</option>`).join('')}</select>`; c = `<input type="range" data-e="c" min="0.1" max="1" step="0.05" value="${v.m ?? 0.6}">`; }
   if (type === 'taxi') { a = `<select data-e="a">${opt(TWYS.map(t => t.id), v.id)}</select>`; }
   return `<div class="effrow" data-type="${type}"><span style="font-size:11.5px">${EFF_TYPES[type]}</span>${a || '<span></span>'}${b || '<span></span>'}<input type="number" data-e="at" min="0" placeholder="at" title="Offset (min) from scenario start" value="${v.at ?? 0}" style="width:70px"><input type="number" data-e="len" min="1" placeholder="len" title="Length (min); blank = until scenario ends" value="${v.len ?? ''}" style="width:70px"><button class="btn sm dng" data-x="1">✕</button>${c ? `<div style="grid-column:2/7">${c}</div>` : ''}</div>`;
 }
@@ -384,7 +397,7 @@ $('#modal').addEventListener('click', e => {
   if (t.closest('[data-x]')) { t.closest('.effrow').remove(); return; }
   if (t.id === 'cbSave') {
     const evs = $$('#cbEff .effrow').map(r => { const g = k => { const el = $(`[data-e="${k}"]`, r); return el ? el.value : null; }, ty = r.dataset.type, o = { k: ty, at: +g('at') || 0 }; const ln = g('len'); if (ln) o.len = +ln;
-      if (ty === 'src') Object.assign(o, { fac: g('a'), src: g('b'), st: g('c') }); if (ty === 'wx') Object.assign(o, { ap: g('a'), type: g('b'), sev: +g('c') }); if (ty === 'rwy') Object.assign(o, { ap: 'JFK', rwy: g('a') }); if (ty === 'cap') Object.assign(o, { ap: g('a'), m: +g('c') }); if (ty === 'taxi') Object.assign(o, { id: g('a') }); return o; });
+      if (ty === 'src') Object.assign(o, { fac: g('a'), src: g('b'), st: g('c') }); if (ty === 'wx') Object.assign(o, { ap: g('a'), type: g('b'), sev: +g('c') }); if (ty === 'rwy') Object.assign(o, { ap: FOC, rwy: g('a') }); if (ty === 'cap') Object.assign(o, { ap: g('a'), m: +g('c') }); if (ty === 'taxi') Object.assign(o, { id: g('a') }); return o; });
     if (!evs.length) { toast('Add at least one effect'); return; }
     regCustom({ name: $('#cbName').value.trim() || 'Custom scenario', blurb: $('#cbDesc').value.trim(), start: +$('#cbStart').value, dur: +$('#cbDur').value, restore: +$('#cbRest').value, staticEvents: evs });
     saveCustom(); $('#modal').classList.remove('on'); renderLab(); toast('Scenario saved to library');
@@ -394,16 +407,27 @@ $('#modal').addEventListener('click', e => {
 });
 
 /* ---------- guide ---------- */
-$('#guide').onclick = () => { const m = $('#modal'); m.classList.add('on'); m.innerHTML = `<div class="box"><div class="row sb"><h2>AIRSPACE — how it works</h2><button class="btn sm" data-close="1">Close</button></div>
-  <p class="muted" style="margin:8px 0 12px">A human-supervised decision-support and training tool for air traffic control teams, centered on JFK. It organizes information, flags developing problems and lets teams rehearse disruptions. It never issues clearances, directs aircraft or activates procedures.</p>
+$('#guide').onclick = () => { const m = $('#modal'); m.classList.add('on'); m.innerHTML = `<div class="box"><div class="row sb"><h2>AeroFlo — how it works</h2><button class="btn sm" data-close="1">Close</button></div>
+  <p class="muted" style="margin:8px 0 12px">A human-supervised decision-support and training tool for air traffic control teams, centered on JFK, LGA and EWR (switch the focus airport in the sidebar or at the top). It organizes information, flags developing problems and lets teams rehearse disruptions. It never issues clearances, directs aircraft or activates procedures.</p>
   <div class="list" style="gap:8px;font-size:12.5px">
-  <div><b>Network</b> — synthetic nationwide traffic across 30 airports and 20 ARTCC regions. Click an airport; watch how a JFK problem ripples through aircraft rotations to connecting airports.</div>
-  <div><b>JFK Surface</b> — runway configuration and utilization, taxiway congestion, departure queues and arrival flow.</div>
+  <div><b>Network</b> — synthetic nationwide traffic across 30 airports and 20 ARTCC regions. Click an airport; watch how a problem at the focus airport ripples through aircraft rotations to connecting airports.</div>
+  <div><b>Surface</b> — runway configuration and utilization, taxiway congestion, departure queues and arrival flow.</div>
   <div><b>What-If Lab</b> — stack hypothetical failures, test advisory responses, run them against the same traffic and compare. Add or import your own scenarios any time.</div>
   <div><b>Degraded Ops</b> — which sources and capabilities remain, a human task board with owners, and restoration tracking.</div>
-  <div><b>Weather layer</b> — faint rain and snow, clouds, moving winds aloft, storm cells, a cold-front line, crosswind arrows and rings on airports with poor flying weather (Network view, Layers; the JFK Surface view lists runway crosswinds). Click an airport for its conditions. Weather scenarios from the Lab strengthen it. Synthetic, not a real forecast.</div>
+  <div><b>Weather layer</b> — faint rain and snow, clouds, moving winds aloft, storm cells, a cold-front line, crosswind arrows and rings on airports with poor flying weather (Network view, Layers; the Surface view lists runway crosswinds). Click an airport for its conditions. Weather scenarios from the Lab strengthen it. Synthetic, not a real forecast.</div>
   <div><b>Alerts &amp; Checks</b> — every alert explains its trigger, sources and uncertainty; instruction-vs-observed checks flag inconsistencies. Decisions are logged for human review.</div></div>
   <div class="row" style="margin-top:14px;gap:6px;flex-wrap:wrap">${tag('PUBLIC')}${tag('SYNTHETIC')}${tag('ESTIMATED')}${tag('SIMULATED')}<span class="muted" style="font-size:11.5px">every panel labels what kind of data it shows. Drag the timeline to scrub; the scenario windows are shaded.</span></div></div>`; };
+
+/* ---------- focus airport (JFK / LGA / EWR) ---------- */
+function setFocus(id) {
+  if (!AIRFIELD[id] || id === FOC) return;
+  applyAirfield(id); S.sel = id; S.pick = null; S.runs = []; S.cfg = newCfg(); S.applied = newCfg(); S.selTaxi = null; S.cmpSeed = 0;
+  const b = runHeadless(newCfg(), HORIZON, SEED); S.runs.push({ id: 0, name: 'Baseline (no scenario)', color: RUN_COLORS[0], cfg: newCfg(), result: b.result, series: b.series });
+  newSim(S.cfg); $$('#focsw button').forEach(x => x.classList.toggle('on', x.dataset.f === id)); labCat = 'All';
+  refreshPanels(true); if (S.view === 'lab') renderLab(); toast('Focus airport: ' + id);
+  tellParent({ type: 'airspace-zip-focus-changed', id });
+}
+$('#focsw').onclick = e => { const b = e.target.closest('button'); if (b) setFocus(b.dataset.f); };
 
 /* ---------- init ---------- */
 (function init() {
@@ -411,7 +435,14 @@ $('#guide').onclick = () => { const m = $('#modal'); m.classList.add('on'); m.in
   // baseline reference run (no scenario) — used for "expected" values and comparisons
   const b = runHeadless(newCfg(), HORIZON, SEED);
   S.runs.push({ id: 0, name: 'Baseline (no scenario)', color: RUN_COLORS[0], cfg: newCfg(), result: b.result, series: b.series });
-  newSim(newCfg()); fitUS();
+  newSim(newCfg());
+  if (PREVIEW_MODE) {
+    seek(120);
+    const area = freeArea();
+    cam.x = lon2x(-74.0);
+    cam.y = lat2y(40.7);
+    cam.s = Math.min(area.w / 5.4, area.h / 3.4);
+  } else fitUS();
   const h = location.hash.slice(1); if (['net', 'sfc', 'lab', 'deg', 'alr'].includes(h)) setView(h); else refreshPanels(true);
   requestAnimationFrame(frame);
   window.__S = S;

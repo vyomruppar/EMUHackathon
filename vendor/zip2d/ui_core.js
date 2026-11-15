@@ -1,15 +1,22 @@
 'use strict';
 /* ============================================================
-   AIRSPACE — UI core: state, loop, map + JFK surface renderers, timeline
+   AIRSPACE — UI core: state, loop, map + airport surface renderers, timeline
    ============================================================ */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const HORIZON = 360, SEED = 11;
+const PREVIEW_MODE = new URLSearchParams(location.search).get('preview') === '1';
+if (PREVIEW_MODE) document.body.classList.add('preview-mode');
+/* Inside the AeroFlo portal the sidebar owns navigation and status, so the
+   simulator hides its own top bar and reports state changes to the parent. */
+const EMBEDDED = new URLSearchParams(location.search).get('embed') === '1' && parent !== window;
+if (EMBEDDED) document.body.classList.add('embedded');
+const tellParent = msg => { if (EMBEDDED) parent.postMessage(msg, location.origin); };
 const RUN_COLORS = ['#8a96a8', '#5aa9ff', '#ff8a3d', '#3ddc97', '#b18cff', '#f5b942', '#ff4d5e', '#2dd4bf', '#e879f9', '#a3e635'];
 
 const S = {
-  view: 'net', sim: null, cfg: newCfg(), applied: newCfg(), speed: 10 / 60, playing: true, acc: 0, sel: 'JFK',
+  view: 'net', sim: null, cfg: newCfg(), applied: newCfg(), speed: 10 / 60, playing: true, acc: 0, sel: FOC,
   wxAmt: 0.6, layers: { jfk: 1, sectors: 1, wx: 1, cloud: 1, wind: 1, storm: 1, xw: 1, routes: 0, aircraft: 1, rings: 1, labels: 1 },
-  runs: [], runSeq: 0, uid: 1, cmp: 'q',
+  runs: [], runSeq: 0, uid: 1, cmp: 'q', aiProposalRequests: new Set(),
   alerts: [], alertByKey: {}, alertSeq: 1, alertVer: 0, alertSel: null, incIdx: 0, lastIncAt: {},
   tasks: [], taskKeys: {}, taskVer: 0, restored: {}, decisions: [], selTaxi: null,
 };
@@ -32,14 +39,27 @@ function seek(t) {
   t = clamp(Math.round(t), 0, HORIZON - 1);
   S.alerts = []; S.alertByKey = {}; S.incIdx = 0; S.lastIncAt = {}; S.tasks = []; S.taskKeys = {}; S.restored = {}; S.alertVer++; S.taskVer++;
   S.sim = new Sim(S.applied, { seed: SEED });
-  while (S.sim.t < t) { S.sim.step(); onMinute(); }
+  S.quietAlerts = true;
+  try { while (S.sim.t < t) { S.sim.step(); onMinute(); } } finally { S.quietAlerts = false; }
   S.acc = 0;
 }
 function updateChip() {
   const st = S.applied.stack, el = $('#scenChip');
   el.className = 'chip' + (st.length ? ' on' : '');
   el.innerHTML = st.length ? `Scenario: <b>${esc(st.map(s => SCEN[s.sid]?.name || s.sid).join(' + '))}</b>` : 'Baseline · no scenario';
+  tellParent({ type: 'airspace-zip-scenario', names: st.map(s => SCEN[s.sid]?.name || s.sid) });
+  el.title = st.length ? 'Click to clear the scenario and return to normal operations' : '';
+  el.style.cursor = st.length ? 'pointer' : '';
 }
+/* Back to the beginning: no scenarios or advisory responses, clock at minute 0.
+   Saved comparison runs in the What-If Lab are kept. */
+function resetToStart() {
+  const c = newCfg(); S.cfg = c; S.pick = null; newSim(c);
+  if (typeof refreshPanels === 'function') refreshPanels(true);
+  if (S.view === 'lab' && typeof renderLab === 'function') renderLab();
+  if (typeof toast === 'function') toast('Reset to the start. No scenarios running.');
+}
+$('#scenChip').addEventListener('click', () => { if (S.applied.stack.length) resetToStart(); });
 
 /* ---------- main loop ---------- */
 let last = performance.now(), lastPanel = 0;
@@ -66,7 +86,10 @@ function resize() {
   const tl = $('#tlc'); const r = tl.parentElement.getBoundingClientRect(); tl.width = Math.max(10, r.width) * DPR; tl.height = Math.max(10, r.height) * DPR;
 }
 function freeArea() { // area not covered by side panels
-  const l = (S.view === 'net' || S.view === 'sfc') ? (W > 1100 ? 334 : 286) : 0, r = (S.view === 'net' || S.view === 'sfc') ? (W > 1100 ? 368 : 306) : 0;
+  if (PREVIEW_MODE) return { cx: W / 2, cy: H / 2, w: W, h: H };
+  const sidePanels = S.view === 'net' || S.view === 'sfc';
+  const l = sidePanels ? (W > 1100 ? 334 : Math.min(286, W * 0.62)) : 0;
+  const r = sidePanels && W > 820 ? (W > 1100 ? 368 : 306) : 0;
   return { cx: l + (W - l - r) / 2, cy: 58 + (H - 58 - 96) / 2, w: W - l - r, h: H - 154 };
 }
 function fitUS() { if (typeof ZM !== 'undefined') ZM.s = null; const a = freeArea(); cam.x = 23.2; cam.y = 13.4; cam.s = Math.min(a.w / 47.5, a.h / 27.5); }
@@ -74,6 +97,19 @@ function focusNY() { if (typeof ZM !== 'undefined') ZM.s = null; const a = freeA
 function focusAp(id) { if (typeof ZM !== 'undefined') ZM.s = null; const a = freeArea(); cam.x = AP[id].x; cam.y = AP[id].y; cam.s = Math.max(cam.s, 40); }
 const w2s = (x, y) => { const a = freeArea(); return [(x - cam.x) * cam.s + a.cx, (y - cam.y) * cam.s + a.cy]; };
 const s2w = (px, py) => { const a = freeArea(); return [(px - a.cx) / cam.s + cam.x, (py - a.cy) / cam.s + cam.y]; };
+function traceBaseLand() {
+  ctx.beginPath();
+  // Draw each contiguous state polygon. Michigan's disconnected peninsulas
+  // and islands are restored as separate polygons by michigan.js.
+  // This shared path drives land fill, borders, weather and sector clipping.
+  for (const [, polygons] of US_STATES) for (const polygon of polygons) for (const ring of polygon) {
+    ring.forEach(([lon, lat], i) => { const [x, y] = w2s(lon2x(lon), lat2y(lat)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.closePath();
+  }
+}
+function traceWeatherLand() {
+  traceBaseLand();
+}
 let dragging = null, moved = 0;
 CV.addEventListener('pointerdown', e => { ZM.s = null; dragging = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }; moved = 0; CV.setPointerCapture(e.pointerId); CV.classList.add('drag'); });
 CV.addEventListener('pointermove', e => { if (!dragging || S.view === 'sfc') return; const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y; moved = Math.max(moved, Math.abs(dx) + Math.abs(dy)); cam.x = dragging.cx - dx / cam.s; cam.y = dragging.cy - dy / cam.s; });
@@ -81,8 +117,13 @@ CV.addEventListener('pointerup', e => {
   CV.classList.remove('drag'); const was = dragging; dragging = null; if (!was || moved > 5) return;
   if (S.view === 'net') {
     let ph = null, pd = 14; for (const h of LASTHIT) { const d = Math.hypot(h.x - e.clientX, h.y - e.clientY); if (d < pd) { pd = d; ph = h; } }
-    if (ph) { S.pick = S.pick === ph.f ? null : ph.f; return; }
+    if (ph) {
+      S.pick = S.pick === ph.f ? null : ph.f;
+      parent.postMessage({ type: 'airspace-zip-selected', id: S.pick ? `zip2d-${S.pick.id}` : null }, location.origin);
+      return;
+    }
     S.pick = null;
+    parent.postMessage({ type: 'airspace-zip-selected', id: null }, location.origin);
     let best = null, bd = 18; for (const a of AIRPORTS) { const [x, y] = w2s(a.x, a.y); const d = Math.hypot(x - e.clientX, y - e.clientY); if (d < bd) { bd = d; best = a.id; } }
     if (best) { S.sel = best; refreshPanels(true); }
   }
@@ -131,23 +172,24 @@ const SEC = { cv: document.createElement('canvas'), key: '' }; SEC.cv.width = 11
 function drawNet() {
   const sim = S.sim, tt = sim.t + Math.min(0.999, S.acc), fx = sim.fx;
   const L = S.layers, P = sectorPressure(sim);
-  // base: US outline
-  ctx.beginPath(); US_POLY.forEach(([lo, la], i) => { const [x, y] = w2s(lon2x(lo), lat2y(la)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath();
-  ctx.fillStyle = '#090d14'; ctx.fill();
+  // Base land: detailed local state/coastline outlines in the landing preview,
+  // original schematic U.S. outline in the full network view.
+  traceBaseLand();
+  ctx.fillStyle = PREVIEW_MODE ? '#101d2a' : '#090d14'; ctx.fill('evenodd');
   if (L.sectors) {
     const key = Object.values(P).map(v => v.toFixed(2)).join();
     if (SEC.key !== key) { SEC.key = key; SEC.x.clearRect(0, 0, 118, 52); for (const c of SECTOR_CELLS.cells) { SEC.x.fillStyle = sectorColor(P[c.c]); SEC.x.fillRect(c.gx, 51 - c.gy, 1, 1); } }
-    ctx.save(); ctx.beginPath(); US_POLY.forEach(([lo, la], i) => { const [x, y] = w2s(lon2x(lo), lat2y(la)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); ctx.clip();
+    ctx.save(); traceBaseLand(); ctx.clip('evenodd');
     const [x0, y0] = w2s(0, 0), [x1, y1] = w2s(lon2x(-66), lat2y(24)); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(SEC.cv, x0, y0, x1 - x0, y1 - y0); ctx.restore();
     ctx.strokeStyle = `rgba(138,150,168,${cam.s > 36 ? 0.07 : 0.16})`; ctx.lineWidth = 0.7; ctx.beginPath();
     for (const e of SECTOR_CELLS.edges) { const [ax, ay] = w2s(e[0], e[1]), [bx, by] = w2s(e[2], e[3]); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
     ctx.stroke();
   }
-  if (L.wx || L.cloud) { ctx.save(); ctx.beginPath(); US_POLY.forEach(([lo, la], i) => { const [x, y] = w2s(lon2x(lo), lat2y(la)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); ctx.clip(); const [x0, y0] = w2s(0, 0), [x1, y1] = w2s(lon2x(-66), lat2y(24)); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = S.wxAmt; if (L.cloud) ctx.drawImage(wxCloudImage(tt), x0, y0, x1 - x0, y1 - y0); if (L.wx) ctx.drawImage(wxNetImage(tt), x0, y0, x1 - x0, y1 - y0); ctx.restore(); }
+  if (L.wx || L.cloud) { ctx.save(); traceWeatherLand(); ctx.clip('evenodd'); const [x0, y0] = w2s(0, 0), [x1, y1] = w2s(lon2x(-66), lat2y(24)); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = S.wxAmt; if (L.cloud) ctx.drawImage(wxCloudImage(tt), x0, y0, x1 - x0, y1 - y0); if (L.wx) ctx.drawImage(wxNetImage(tt), x0, y0, x1 - x0, y1 - y0); ctx.restore(); }
   if (L.wind) wxDrawWind(tt);
   if (L.wx) wxDrawFront(tt);
-  ctx.beginPath(); US_POLY.forEach(([lo, la], i) => { const [x, y] = w2s(lon2x(lo), lat2y(la)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath();
-  ctx.strokeStyle = '#2a3446'; ctx.lineWidth = 1.2; ctx.stroke();
+  traceBaseLand();
+  ctx.strokeStyle = PREVIEW_MODE ? '#435d73' : '#2a3446'; ctx.lineWidth = PREVIEW_MODE ? 1.35 : 1.2; ctx.stroke();
   if (L.sectors && cam.s > 14) { ctx.fillStyle = 'rgba(138,150,168,.5)'; ctx.font = '500 10px Geist Mono,monospace'; ctx.textAlign = 'center'; for (const c of CENTERS) { const [x, y] = w2s(c.x, c.y); ctx.fillText(c.id, x, y); } }
   // weather disks
   for (const id in fx.wx) { const w = fx.wx[id], a = AP[id], [x, y] = w2s(a.x, a.y), r = (0.5 + 1.1 * w.sev) * cam.s; const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(177,140,255,${0.32 * w.f})`); g.addColorStop(1, 'rgba(177,140,255,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); }
@@ -157,18 +199,18 @@ function drawNet() {
   const HIT = []; // aircraft screen positions, for hover
   if (L.routes) {
     ctx.lineCap = 'round';
-    for (const k in flows) { const o = flows[k], A = AP[o.a], B = AP[o.b], d = o.dl / o.n, jfk = o.a === 'JFK' || o.b === 'JFK'; if (L.jfk && !(NYAP.has(o.a) || NYAP.has(o.b))) continue; const [x1, y1] = w2s(A.x, A.y), [x2, y2] = w2s(B.x, B.y); ctx.strokeStyle = d > 30 ? `rgba(255,77,94,${0.25 + 0.05 * o.n})` : d > 12 ? `rgba(245,185,66,${0.2 + 0.05 * o.n})` : jfk ? `rgba(90,169,255,${0.1 + 0.05 * o.n})` : `rgba(138,150,168,${0.04 + 0.03 * o.n})`; ctx.lineWidth = Math.min(3, 0.5 + 0.35 * o.n); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+    for (const k in flows) { const o = flows[k], A = AP[o.a], B = AP[o.b], d = o.dl / o.n, jfk = o.a === FOC || o.b === FOC; if (L.jfk && !(NYAP.has(o.a) || NYAP.has(o.b))) continue; const [x1, y1] = w2s(A.x, A.y), [x2, y2] = w2s(B.x, B.y); ctx.strokeStyle = d > 30 ? `rgba(255,77,94,${0.25 + 0.05 * o.n})` : d > 12 ? `rgba(245,185,66,${0.2 + 0.05 * o.n})` : jfk ? `rgba(90,169,255,${0.1 + 0.05 * o.n})` : `rgba(138,150,168,${0.04 + 0.03 * o.n})`; ctx.lineWidth = Math.min(3, 0.5 + 0.35 * o.n); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
   }
   // ripple arcs & rings
   if (L.rings) {
     const rp = sim.ripple(), edges = {};
-    for (const e of sim.A.JFK.rip) { edges[e.d] = (edges[e.d] || 0) + e.v; }
-    for (const d in edges) { const A = AP.JFK, B = AP[d], [x1, y1] = w2s(A.x, A.y), [x2, y2] = w2s(B.x, B.y), mx = (x1 + x2) / 2 - (y2 - y1) * 0.12, my = (y1 + y2) / 2 + (x2 - x1) * 0.12; const k = clamp(edges[d] / 120, 0.1, 1); ctx.strokeStyle = `rgba(255,138,61,${0.25 + 0.5 * k})`; ctx.lineWidth = 1 + 2.5 * k; ctx.setLineDash([5, 4]); ctx.lineDashOffset = -tt * 2; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo(mx, my, x2, y2); ctx.stroke(); ctx.setLineDash([]); }
+    for (const e of sim.A[FOC].rip) { edges[e.d] = (edges[e.d] || 0) + e.v; }
+    for (const d in edges) { const A = AP[FOC], B = AP[d], [x1, y1] = w2s(A.x, A.y), [x2, y2] = w2s(B.x, B.y), mx = (x1 + x2) / 2 - (y2 - y1) * 0.12, my = (y1 + y2) / 2 + (x2 - x1) * 0.12; const k = clamp(edges[d] / 120, 0.1, 1); ctx.strokeStyle = `rgba(255,138,61,${0.25 + 0.5 * k})`; ctx.lineWidth = 1 + 2.5 * k; ctx.setLineDash([5, 4]); ctx.lineDashOffset = -tt * 2; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo(mx, my, x2, y2); ctx.stroke(); ctx.setLineDash([]); }
     for (const id in rp) { const a = AP[id], [x, y] = w2s(a.x, a.y), k = clamp(rp[id].sum / 250, 0.12, 1), ph = (((tt * 0.12 + a.lon) % 1) + 1) % 1; ctx.strokeStyle = `rgba(255,138,61,${0.55 * (1 - ph)})`; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(x, y, (8 + 26 * k) * (0.5 + ph), 0, 7); ctx.stroke(); ctx.fillStyle = `rgba(255,138,61,${0.12 + 0.25 * k})`; ctx.beginPath(); ctx.arc(x, y, 6 + 16 * k, 0, 7); ctx.fill(); }
   }
   // facility outage rings
   for (const a of AIRPORTS) {
-    let worst = 0; for (const f of [a.id + '_TWR', a.tracon, 'JFK_GND'].filter(Boolean)) { if (f === 'JFK_GND' && a.id !== 'JFK') continue; for (const s of SRCS) { const r = fx.src[f + '|' + s]; if (r) worst = Math.max(worst, r.st === 'lost' ? 2 : 1); } }
+    let worst = 0; for (const f of [a.id + '_TWR', a.tracon, FOC + '_GND'].filter(Boolean)) { if (f === FOC + '_GND' && a.id !== FOC) continue; for (const s of SRCS) { const r = fx.src[f + '|' + s]; if (r) worst = Math.max(worst, r.st === 'lost' ? 2 : 1); } }
     if (worst) { const [x, y] = w2s(a.x, a.y); ctx.strokeStyle = worst === 2 ? 'rgba(255,77,94,.9)' : 'rgba(245,185,66,.9)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.arc(x, y, 14, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
   }
   // aircraft
@@ -176,7 +218,7 @@ function drawNet() {
     const rr = clamp(cam.s / 14, 1, 1.7);
     for (const f of air) {
       const p = acPos(f, tt); if (!p) continue; const [x, y] = w2s(p[0], p[1]); if (x < -10 || y < -10 || x > W + 10 || y > H + 10) continue;
-      const late = f.dep - f.sched > 20, jfk = f.d === 'JFK' || (f.from || f.o) === 'JFK';
+      const late = f.dep - f.sched > 20, jfk = f.d === FOC || (f.from || f.o) === FOC;
       if (L.jfk && !(NYAP.has(f.d) || NYAP.has(f.from || f.o))) continue;
       drawPlane(x, y, p[2], 11 * rr, f.div ? '#b18cff' : late ? '#f5b942' : '#e6eefb'); HIT.push({ f, x, y, p });
       if (tt - f.flag < 12 && f.flag) { ctx.strokeStyle = '#ff4d5e'; ctx.setLineDash([2, 2]); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
@@ -188,12 +230,16 @@ function drawNet() {
   // airports
   for (const a of AIRPORTS) {
     const A = sim.A[a.id], [x, y] = w2s(a.x, a.y); if (x < -30 || y < -30 || x > W + 30 || y > H + 30) continue;
-    const bad = Math.max(1 - A.arrM, clamp(A.delay60 / 40, 0, 1)), col = bad > 0.5 ? '#ff4d5e' : bad > 0.2 ? '#f5b942' : '#3ddc97', r = a.id === 'JFK' ? 7 : NYAP.has(a.id) ? 5.5 : 2.4 + a.cap / 45;
-    ctx.fillStyle = col; ctx.globalAlpha = a.id === 'JFK' ? 1 : 0.85; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    const bad = Math.max(1 - A.arrM, clamp(A.delay60 / 40, 0, 1)), col = bad > 0.5 ? '#ff4d5e' : bad > 0.2 ? '#f5b942' : '#3ddc97', r = a.id === FOC ? 7 : NYAP.has(a.id) ? 5.5 : 2.4 + a.cap / 45;
+    ctx.fillStyle = col; ctx.globalAlpha = a.id === FOC ? 1 : 0.85; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
     if (L.xw) wxStation(a, x, y, r, tt);
-    if (a.id === 'JFK') { ctx.strokeStyle = '#5aa9ff'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(x, y, r + 4, 0, 7); ctx.stroke(); }
+    if (a.id === FOC) { ctx.strokeStyle = '#5aa9ff'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(x, y, r + 4, 0, 7); ctx.stroke(); }
     if (a.id === S.sel) { ctx.strokeStyle = '#eef2f7'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, r + 8, 0, 7); ctx.stroke(); }
-    if (L.labels && (NYAP.has(a.id) || a.id === S.sel || cam.s > 12 || a.cap >= 70)) { ctx.fillStyle = NYAP.has(a.id) ? '#eef2f7' : 'rgba(205,214,228,.7)'; ctx.font = `${NYAP.has(a.id) ? 600 : 500} ${a.id === 'JFK' ? 12 : NYAP.has(a.id) ? 11.5 : 10}px Geist,sans-serif`; ctx.textAlign = 'left'; ctx.fillText(a.id, x + r + 6, y + 3.5); }
+    if (PREVIEW_MODE && NYAP.has(a.id)) {
+      const labels = { EWR: [-8, -9, 'right'], LGA: [9, -8, 'left'], JFK: [10, 13, 'left'] };
+      const [dx, dy, align] = labels[a.id];
+      ctx.fillStyle = '#eef2f7'; ctx.font = '600 11px Geist,sans-serif'; ctx.textAlign = align; ctx.fillText(a.id, x + dx, y + dy);
+    } else if (L.labels && (NYAP.has(a.id) || a.id === S.sel || cam.s > 12 || a.cap >= 70)) { ctx.fillStyle = NYAP.has(a.id) ? '#eef2f7' : 'rgba(205,214,228,.7)'; ctx.font = `${NYAP.has(a.id) ? 600 : 500} ${a.id === FOC ? 12 : NYAP.has(a.id) ? 11.5 : 10}px Geist,sans-serif`; ctx.textAlign = 'left'; ctx.fillText(a.id, x + r + 6, y + 3.5); }
   }
   drawHover(flows, HIT, tt);
 }
@@ -221,26 +267,15 @@ function drawHover(flows, hits, tt) {
   ctx.restore();
 }
 
-/* ---------- JFK surface (schematic, not to scale) ---------- */
-const RW_GEO = { '4L/22R': { a: [400, 610], b: [560, 160], n: ['4L', '22R'] }, '4R/22L': { a: [560, 570], b: [672, 255], n: ['4R', '22L'] }, '13L/31R': { a: [260, 230], b: [740, 320], n: ['13L', '31R'] }, '13R/31L': { a: [120, 330], b: [880, 470], n: ['13R', '31L'] } };
-const TWYS = [
-  { id: 'Taxiway B (north loop)', s: 'B', pts: [[470, 300], [560, 262], [650, 272], [712, 300]], wd: 0.35, wa: 0.1 },
-  { id: 'Taxiway K (south)', s: 'K', pts: [[300, 425], [500, 447], [700, 468], [830, 490]], wd: 0.5, wa: 0.2 },
-  { id: 'Taxiway A (west)', s: 'A', pts: [[372, 570], [440, 390], [490, 255]], wd: 0.3, wa: 0.15 },
-  { id: 'Taxiway Z (east)', s: 'Z', pts: [[690, 540], [706, 430], [696, 335]], wd: 0.25, wa: 0.2 },
-  { id: 'Runway 22R/4L crossing', s: 'X', pts: [[455, 330], [505, 352], [545, 345]], wd: 0.45, wa: 0.3 },
-  { id: 'Terminal 4 ramp', s: 'T4', pts: [[600, 392], [645, 400]], wd: 0.1, wa: 0.45 },
-  { id: 'Ramp / gates (central)', s: 'R', pts: [[512, 330], [560, 342], [625, 360]], wd: 0.15, wa: 0.5 },
-];
-const TERMS = [['T1', 514, 298], ['T2', 548, 294], ['T4', 588, 298], ['T5', 516, 342], ['T7', 556, 348], ['T8', 596, 346]];
+/* ---------- airport surface (schematic, not to scale) ---------- */
 function surfaceCong(sim) {
-  const A = sim.A.JFK, q = A.q.length, tin = sim.tails.filter(f => f.o === 'JFK' && f.st === 'taxiin').length, out = {};
+  const A = sim.A[FOC], q = A.q.length, tin = sim.tails.filter(f => f.o === FOC && f.st === 'taxiin').length, out = {};
   for (const t of TWYS) { let c = clamp((q * t.wd + tin * t.wa * 1.6) / 11, 0, 1); if (sim.fx.taxi.has(t.id)) c = Math.max(c, 0.95); out[t.id] = c; }
   return out;
 }
 const congCol = c => c > 0.75 ? '#ff4d5e' : c > 0.5 ? '#ff8a3d' : c > 0.28 ? '#f5b942' : '#3ddc97';
 function drawSurface() {
-  const sim = S.sim, J = sim.jfk, A = sim.A.JFK, tt = sim.t, a = freeArea(), sc = Math.min(a.w / 960, a.h / 640) * 0.96;
+  const sim = S.sim, J = sim.jfk, A = sim.A[FOC], tt = sim.t, a = freeArea(), sc = Math.min(a.w / 960, a.h / 640) * 0.96;
   ctx.save(); ctx.translate(a.cx - 500 * sc, a.cy - 335 * sc); ctx.scale(sc, sc);
   // land + bay hints
   ctx.fillStyle = '#0a0e15'; ctx.strokeStyle = '#232c3b'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(40, 90, 900, 540, 26); ctx.fill(); ctx.stroke();
@@ -278,7 +313,7 @@ function drawSurface() {
     ctx.fillStyle = 'rgba(245,185,66,.9)'; ctx.font = '600 10px Geist Mono,monospace'; ctx.textAlign = 'center'; ctx.fillText(`DEP ${e} · ${list.length}`, T[0] + nx * 44 - ux * 4, T[1] + ny * 44 - uy * 4);
   });
   // arrival streams on final
-  const inb = sim.tails.filter(f => f.d === 'JFK' && f.st === 'enroute').sort((x, y) => (x.dep + x.dur) - (y.dep + y.dur));
+  const inb = sim.tails.filter(f => f.d === FOC && f.st === 'enroute').sort((x, y) => (x.dep + x.dur) - (y.dep + y.dur));
   J.arr.forEach((e, ri) => {
     const phys = END2PHYS[e], g = RW_GEO[phys], first = g.n[0] === e, T = first ? g.a : g.b, dir = first ? 1 : -1;
     const dx = g.b[0] - g.a[0], dy = g.b[1] - g.a[1], L = Math.hypot(dx, dy), ux = dx / L * dir, uy = dy / L * dir;
@@ -291,12 +326,12 @@ function drawSurface() {
   hold.slice(0, 16).forEach((f, i) => { const ang = tt * 0.3 + i * 0.7; ctx.fillStyle = tt - f.hold0 > 20 ? '#ff4d5e' : '#f5b942'; ctx.beginPath(); ctx.arc(130 + Math.cos(ang) * (54 - (i % 2) * 8), 170 + Math.sin(ang) * (24 - (i % 2) * 5), 3, 0, 7); ctx.fill(); });
   ctx.fillStyle = '#f5b942'; ctx.font = '600 11px Geist Mono,monospace'; ctx.textAlign = 'center'; ctx.fillText(`HOLDING ×${hold.length}`, 130, 212);
   // taxi-in aircraft near terminals
-  sim.tails.filter(f => f.o === 'JFK' && f.st === 'taxiin').slice(0, 14).forEach((f, i) => { const p = clamp(1 - (f.tin - tt) / 10, 0, 1); ctx.fillStyle = '#9fe8c8'; ctx.beginPath(); ctx.arc(470 + 120 * p + (i % 3) * 6, 380 + 20 * p + (i % 4) * 5, 2.8, 0, 7); ctx.fill(); });
+  sim.tails.filter(f => f.o === FOC && f.st === 'taxiin').slice(0, 14).forEach((f, i) => { const p = clamp(1 - (f.tin - tt) / 10, 0, 1); ctx.fillStyle = '#9fe8c8'; ctx.beginPath(); ctx.arc(470 + 120 * p + (i % 3) * 6, 380 + 20 * p + (i % 4) * 5, 2.8, 0, 7); ctx.fill(); });
   ctx.restore();
 }
 
 function draw() {
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.fillStyle = '#05070b'; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.fillStyle = PREVIEW_MODE ? '#08121c' : '#05070b'; ctx.fillRect(0, 0, W, H);
   if (S.view === 'sfc') drawSurface(); else drawNet();
   if (S.view === 'lab' || S.view === 'deg' || S.view === 'alr') { ctx.fillStyle = 'rgba(5,7,11,.72)'; ctx.fillRect(0, 0, W, H); }
 }
@@ -331,6 +366,7 @@ function setView(v) {
   S.view = v; $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v)); $$('.view').forEach(s => s.classList.toggle('on', s.id === 'v-' + v));
   $('#zoomc').style.display = v === 'net' ? 'flex' : 'none'; if (v === 'net' && cam.s < 8.5) fitUS(); CV.style.cursor = v === 'sfc' ? 'default' : 'grab'; refreshPanels(true);
   try { history.replaceState(null, '', '#' + v); } catch (e) { }
+  tellParent({ type: 'airspace-zip-view-changed', view: v });
 }
 $('#zoomc').onclick = e => { const b = e.target.closest('[data-z]'); if (!b) return; if (b.dataset.z === 'fit') { ZM.s = null; fitUS(); } else zoomBy(b.dataset.z === 'in' ? 2 : 0.5); };
 $('#nav').onclick = e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); };

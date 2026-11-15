@@ -85,7 +85,7 @@ class Sim {
   pickW() { let tot = 0; for (const a of AIRPORTS) tot += a.w; let r = this.rng() * tot; for (const a of AIRPORTS) { r -= a.w; if (r <= 0) return a.id; } return 'ATL'; }
   pickDest(o) {
     const r = this.rng();
-    if (o !== 'JFK') { if (r < this.pJFK) return 'JFK'; if (r < this.pJFK + 0.05 && o !== 'EWR' && o !== 'LGA' && o !== 'PHL') return 'EWR'; if (r < this.pJFK + 0.09 && o !== 'EWR' && o !== 'LGA' && o !== 'BOS') return 'LGA'; }
+    if (o !== FOC) { const oth = FOCUS_IDS.filter(x => x !== FOC), ny = FOCUS_IDS.includes(o); if (r < this.pJFK) return FOC; if (r < this.pJFK + 0.05 && !ny && o !== 'PHL') return oth[0]; if (r < this.pJFK + 0.09 && !ny && o !== 'BOS') return oth[1]; }
     const row = this.W[o], x = this.rng(); for (const [id, c] of row) if (x <= c) return id; return row[row.length - 1][0];
   }
   legMin(o, d) { return Math.max(42, distNm(AP[o], AP[d]) * 60 / 430 + 22) + this.rng() * 5; }
@@ -105,17 +105,17 @@ class Sim {
       const A = this.A[id], a = A.ap; let m = this.facM(id + '_TWR', t);
       if (a.tracon) m *= Math.pow(this.facM(a.tracon, t), 0.7);
       m *= Math.pow(this.facM(a.ctr, t), 0.4);
-      const w = fx.wx[id]; if (w) m *= 1 - WX_LOSS[w.type] * w.sev * w.f * (this.mit('rwycfg', t) && id === 'JFK' ? 0.7 : 1);
-      if (id === 'JFK' && fx.rwy.JFK) { let loss = 0; for (const r in fx.rwy.JFK) loss += RWY_LOSS[r]; m *= 1 - Math.min(0.65, loss) * (this.mit('rwycfg', t) ? 0.85 : 1); }
+      const w = fx.wx[id]; if (w) m *= 1 - WX_LOSS[w.type] * w.sev * w.f * (this.mit('rwycfg', t) && id === FOC ? 0.7 : 1);
+      if (id === FOC && fx.rwy[FOC]) { let loss = 0; for (const r in fx.rwy[FOC]) loss += RWY_LOSS[r]; m *= 1 - Math.min(0.65, loss) * (this.mit('rwycfg', t) ? 0.85 : 1); }
       if (fx.cap[id] != null) m *= fx.cap[id];
       A.base = m;
     }
-    const j = this.A.JFK.base;
+    const j = this.A[FOC].base;
     for (const [id, k] of [['EWR', 0.3], ['LGA', 0.3], ['PHL', 0.1]]) this.A[id].base *= 1 - k * (1 - j);   // metroplex coupling
     for (const id of this.ids) {
       const A = this.A[id]; A.arrM = A.depM = A.base;
-      if (id === 'JFK') {
-        A.depM *= Math.pow(this.facM('JFK_GND', t), 0.5) * Math.max(0.5, 1 - 0.18 * fx.taxi.size);
+      if (id === FOC) {
+        A.depM *= Math.pow(this.facM(FOC + '_GND', t), 0.5) * Math.max(0.5, 1 - 0.18 * fx.taxi.size);
         if (this.mit('spacing', t)) { A.arrM *= 0.92; A.depM *= 0.92; }
       }
       A.arrM = clamp(A.arrM, 0.04, 1); A.depM = clamp(A.depM, 0.04, 1);
@@ -123,13 +123,13 @@ class Sim {
   }
   /* ---- JFK runway data (for surface view + consistency checks) ---- */
   updateJfkRunways(t) {
-    const J = this.jfk, fx = this.fx, cl = fx.rwy.JFK || {};
+    const J = this.jfk, fx = this.fx, cl = fx.rwy[FOC] || {};
     J.closedTrue = new Set(Object.keys(cl));
-    const worst = Math.max(RANK[(fx.src['JFK_TWR|FLIGHTDATA'] || { st: 'ok' }).st], RANK[(fx.src['JFK_TWR|NETWORK'] || { st: 'ok' }).st], RANK[(fx.src['N90|NETWORK'] || { st: 'ok' }).st], RANK[(fx.src['N90|FLIGHTDATA'] || { st: 'ok' }).st]);
+    const worst = Math.max(RANK[(fx.src[FOC + '_TWR|FLIGHTDATA'] || { st: 'ok' }).st], RANK[(fx.src[FOC + '_TWR|NETWORK'] || { st: 'ok' }).st], RANK[(fx.src['N90|NETWORK'] || { st: 'ok' }).st], RANK[(fx.src['N90|FLIGHTDATA'] || { st: 'ok' }).st]);
     J.lag = [0, 6, 18][worst];
     J.closedKnown = new Set(Object.keys(cl).filter(r => t >= cl[r] + J.lag));
     let best = J.cfg, bs = 1e9;
-    for (const k of Object.keys(CFG_RWY)) { const c = CFG_RWY[k]; const s = [...c.arr, ...c.dep].filter(e => J.closedKnown.has(END2PHYS[e])).length * 10 + (k === J.cfg ? 0 : 1) - (this.mit('rwycfg', t) && k === 'NE' && fx.wx.JFK ? 0.5 : 0); if (s < bs) { bs = s; best = k; } }
+    for (const k of Object.keys(CFG_RWY)) { const c = CFG_RWY[k]; const s = [...c.arr, ...c.dep].filter(e => J.closedKnown.has(END2PHYS[e])).length * 10 + (k === J.cfg ? 0 : 1) - (this.mit('rwycfg', t) && k === 'NE' && fx.wx[FOC] ? 0.5 : 0); if (s < bs) { bs = s; best = k; } }
     J.cfg = best;
     const open = e => !J.closedKnown.has(END2PHYS[e]);
     J.dep = CFG_RWY[J.cfg].dep.filter(open); J.arr = CFG_RWY[J.cfg].arr.filter(open);
@@ -137,8 +137,8 @@ class Sim {
     if (!J.arr.length) J.arr = J.dep.slice();
   }
   noteIncons(t, kind, sev, cs, detail, srcs, unc) { this.incons.push({ t, kind, sev, cs, detail, srcs, unc }); if (this.incons.length > 200) this.incons.shift(); }
-  surveillanceQuality(t) { return (1 - this.pen('JFK_TWR', 'RADAR', t)) * (1 - this.pen('JFK_TWR', 'ADSB', t)) * (1 - this.pen('N90', 'RADAR', t)); }
-  commsQuality(t) { return (1 - this.pen('JFK_TWR', 'VOICE', t)) * (1 - this.pen('JFK_TWR', 'DATALINK', t)); }
+  surveillanceQuality(t) { return (1 - this.pen(FOC + '_TWR', 'RADAR', t)) * (1 - this.pen(FOC + '_TWR', 'ADSB', t)) * (1 - this.pen('N90', 'RADAR', t)); }
+  commsQuality(t) { return (1 - this.pen(FOC + '_TWR', 'VOICE', t)) * (1 - this.pen(FOC + '_TWR', 'DATALINK', t)); }
 
   /* ---- one simulated minute ---- */
   step() {
@@ -161,14 +161,14 @@ class Sim {
     for (const id of this.ids) {
       const A = this.A[id];
       for (const f of A.h.slice()) {
-        const w = t - f.hold0, lim = (id === 'JFK' && this.mit('divert', t)) ? 20 : 55;
+        const w = t - f.hold0, lim = (id === FOC && this.mit('divert', t)) ? 20 : 55;
         if (w > lim) { A.h.splice(A.h.indexOf(f), 1); this.divert(f, A, t); }
       }
       while (A.h.length && A.arrTok >= 1) {
         const f = A.h.shift(); A.arrTok -= 1; const w = t - f.hold0;
         A.ev.push({ t, v: w, k: 'arr' }); if (w > 10) this.stats.holdLong++;
-        if (id === 'JFK') { this.stats.jfkHold += w; this.stats.jfkHoldN++; this.jfkOps.push(t); this.assignArr(f, t); if (w >= 8) { f.lin = true; f.hop = 0; } }
-        const taxi = id === 'JFK' ? 6 + Math.min(14, 0.18 * A.q.length) + (fx.taxi.size ? 5 : 0) : 5;
+        if (id === FOC) { this.stats.jfkHold += w; this.stats.jfkHoldN++; this.jfkOps.push(t); this.assignArr(f, t); if (w >= 8) { f.lin = true; f.hop = 0; } }
+        const taxi = id === FOC ? 6 + Math.min(14, 0.18 * A.q.length) + (fx.taxi.size ? 5 : 0) : 5;
         f.st = 'taxiin'; f.tin = t + taxi; f.o = id;
         if (f.div) { f.nextSched = f.tin + 40; f.ready = f.nextSched; f.div = false; f.sched = f.nextSched; f.lin = false; }
         else { f.nextSched = f.sched + f.plan + 45; f.ready = Math.max(f.nextSched, f.tin + 28 + this.rng() * 8); }
@@ -182,17 +182,17 @@ class Sim {
       const used = new Set(); let relFam = null, keep = [];
       for (const f of A.q) {
         if (A.depTok < 1) { keep.push(f); continue; }
-        if (f.d === 'JFK') {
+        if (f.d === FOC) {
           if (this.mit('gstop', t) && t < mitBase(this.cfg) + this.cfg.mit.gstop.at + (this.cfg.mit.gstop.dur || 40)) { keep.push(f); this.stats.gsHeld++; continue; }
           if (this.mit('gdp', t)) {
-            const J2 = this.A.JFK;
+            const J2 = this.A[FOC];
             if (f.gdp == null) { const eta = t + f.plan + 8, slot = Math.max(eta, J2.nextSlot, t + f.plan); J2.nextSlot = slot + 60 / (J2.aar * J2.arrM * 0.97); f.gdp = t + Math.min(180, Math.max(0, slot - (t + f.plan))); this.stats.gdpMin += Math.max(0, f.gdp - t); }
             if (t < f.gdp) { keep.push(f); continue; }
           }
         }
         let rw = null;
-        if (id === 'JFK') {
-          const towOk = !fx.src['JFK_TWR|VOICE'] && !fx.src['JFK_TWR|NETWORK'];
+        if (id === FOC) {
+          const towOk = !fx.src[FOC + '_TWR|VOICE'] && !fx.src[FOC + '_TWR|NETWORK'];
           rw = J.dep[J.rr.dep % J.dep.length]; const fam = FAM[END2PHYS[rw]];
           if (relFam && relFam !== fam) {
             if (towOk) { keep.push(f); continue; }
@@ -203,16 +203,16 @@ class Sim {
         }
         A.depTok -= 1; f.st = 'enroute'; f.from = id; f.dep = t; f.dur = f.plan + (this.rng() - 0.4) * 6; f.rwy = rw || '';
         const qw = t - f.qEnter, dd = t - f.sched; A.ev.push({ t, v: dd, k: 'dep', q: qw }); this.gev.push({ t, v: dd }); this.stats.dep++; if (dd > 15) this.stats.late++;
-        if (id === 'JFK') { this.stats.jfkDepDelay += dd; this.stats.jfkDepN++; this.jfkOps.push(t); if (qw >= 8) { f.lin = true; f.hop = 0; } }
+        if (id === FOC) { this.stats.jfkDepDelay += dd; this.stats.jfkDepN++; this.jfkOps.push(t); if (qw >= 8) { f.lin = true; f.hop = 0; } }
         else if (f.lin && f.prop > 3) A.rip.push({ t, v: f.prop, hop: f.hop, o: id, d: f.d });
-        if (id === 'JFK' && f.lin) A.rip.push({ t, v: f.prop + qw, hop: 0, o: id, d: f.d });
+        if (id === FOC && f.lin) A.rip.push({ t, v: f.prop + qw, hop: 0, o: id, d: f.d });
       }
       A.q = keep;
     }
     // observational incidents (off-route) — more likely when surveillance is degraded
     const sq = this.surveillanceQuality(t);
     if (t >= 0 && this.rng() < 0.05 + 0.5 * (1 - sq)) {
-      const air = this.tails.filter(f => f.st === 'enroute' && (f.d === 'JFK' || f.o === 'JFK' || f.rwy)); if (air.length) {
+      const air = this.tails.filter(f => f.st === 'enroute' && (f.d === FOC || f.o === FOC || f.rwy)); if (air.length) {
         const f = air[Math.floor(this.rng() * air.length)]; f.flag = t;
         this.noteIncons(t, 'offroute', sq < 0.9 ? 'warning' : 'info', f.cs, `Observed track ~${8 + Math.floor(this.rng() * 14)} nm from filed route between ${f.o} and ${f.d}.`, sq < 0.9 ? ['ADSB', 'RADAR'] : ['ADSB'], sq < 0.9 ? 'Position data aged / partial — may be a stale track rather than a real deviation.' : 'Could be a weather deviation approved by a controller; no clearance record to compare.');
       }
@@ -227,7 +227,7 @@ class Sim {
   }
   divert(f, A, t) {
     let best = null, bs = -1;
-    const cand = A.id === 'JFK' ? ['EWR', 'PHL', 'BOS', 'BWI', 'LGA'] : this.ids.filter(i => i !== A.id).sort((a, b) => distNm(AP[A.id], AP[a]) - distNm(AP[A.id], AP[b])).slice(0, 4);
+    const cand = A.id === FOC ? ['EWR', 'PHL', 'BOS', 'BWI', 'LGA'] : this.ids.filter(i => i !== A.id).sort((a, b) => distNm(AP[A.id], AP[a]) - distNm(AP[A.id], AP[b])).slice(0, 4);
     for (const c of cand) { const B = this.A[c], s = B.arrM / (1 + B.h.length / 8); if (s > bs) { bs = s; best = c; } }
     f.from = A.id; f.d = best; f.st = 'enroute'; f.dep = t; f.dur = 12 + this.rng() * 8; f.div = true; f.hop = f.lin ? 1 : 9; this.stats.div++;
     this.noteIncons(t, 'divert', 'info', f.cs, `${f.cs} diverted from ${A.id} to ${best} after ${Math.round(t - f.hold0)} min holding.`, ['FLIGHTDATA'], 'Estimated alternate chosen by modeled headroom; fuel state not modeled.');
@@ -253,22 +253,22 @@ class Sim {
   ledgerAdd(t, f, type, instr, obs, bad) { this.ledger.push({ t, cs: f.cs, type, instr, obs, bad, d: f.d, o: f.o }); if (this.ledger.length > 60) this.ledger.shift(); }
 
   record(t) {
-    const J = this.A.JFK, h = J.h.length, q = J.q.length;
+    const J = this.A[FOC], h = J.h.length, q = J.q.length;
     const net = this.gev.length ? this.gev.reduce((s, e) => s + e.v, 0) / this.gev.length : 0;
     const cs = this.commsQuality(t) * this.surveillanceQuality(t);
-    const wxs = this.fx.wx.JFK ? this.fx.wx.JFK.sev * this.fx.wx.JFK.f : 0;
+    const wxs = this.fx.wx[FOC] ? this.fx.wx[FOC].sev * this.fx.wx[FOC].f : 0;
     let risk = 100 * (0.40 * (1 - cs) + 0.25 * clamp(q / 40, 0, 1) + 0.22 * clamp(h / 10, 0, 1) + 0.13 * wxs);
     if (this.mit('spacing', t)) risk *= 0.75; if (this.mit('backupComms', t)) risk *= 0.9;
     this.risk = clamp(risk, 0, 100);
     this.series.push({ t, q, h, thr: this.jfkOps.length, net, risk: this.risk, cap: Math.round(J.aar * J.arrM) });
   }
   /* ---- derived values used by UI ---- */
-  jfkQueueWait() { const J = this.A.JFK; return J.q.length / Math.max(1, J.adr * J.depM / 60); }
+  jfkQueueWait() { const J = this.A[FOC]; return J.q.length / Math.max(1, J.adr * J.depM / 60); }
   ripple() {
     const out = {};
-    for (const id of this.ids) { if (id === 'JFK') continue; const A = this.A[id]; if (!A.rip.length) continue; out[id] = { sum: A.rip.reduce((x, e) => x + e.v, 0), n: A.rip.length, hop: Math.min(...A.rip.map(e => e.hop)), inb: 0 }; }
+    for (const id of this.ids) { if (id === FOC) continue; const A = this.A[id]; if (!A.rip.length) continue; out[id] = { sum: A.rip.reduce((x, e) => x + e.v, 0), n: A.rip.length, hop: Math.min(...A.rip.map(e => e.hop)), inb: 0 }; }
     // aircraft already late and still en route will deliver the delay downstream
-    for (const f of this.tails) if (f.lin && f.st === 'enroute' && f.d !== 'JFK' && f.hop <= 3) {
+    for (const f of this.tails) if (f.lin && f.st === 'enroute' && f.d !== FOC && f.hop <= 3) {
       const late = f.dep + f.dur - (f.sched + f.plan); if (late < 8) continue;
       const o = out[f.d] || (out[f.d] = { sum: 0, n: 0, hop: f.hop + 1, inb: 0 }); o.sum += late * 0.6; o.inb++; o.hop = Math.min(o.hop, f.hop + 1);
     }
@@ -279,7 +279,7 @@ class Sim {
     const win = S.filter(s => s.t >= a && s.t <= b + 60), W = win.length ? win : S;
     const mean = (arr, k) => arr.length ? arr.reduce((x, e) => x + e[k], 0) / arr.length : 0;
     let rec = null; if (sc.length) { for (const s of S) if (s.t >= b && s.q <= 6 && s.h <= 2) { rec = s.t - b; break; } }
-    const impacted = AIRPORTS.filter(x => x.id !== 'JFK' && this.A[x.id].peak > 15).length;
+    const impacted = AIRPORTS.filter(x => x.id !== FOC && this.A[x.id].peak > 15).length;
     const st = this.stats;
     return {
       avgJfkDep: st.jfkDepN ? st.jfkDepDelay / st.jfkDepN : 0, avgJfkHold: st.jfkHoldN ? st.jfkHold / st.jfkHoldN : 0, avgNet: mean(W, 'net'),

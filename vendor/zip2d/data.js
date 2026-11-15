@@ -63,7 +63,7 @@ const CTR = Object.fromEntries(CENTERS.map(c => [c.id, c]));
 // Facilities: every airport tower, JFK ground/ramp, N90 TRACON, every ARTCC
 const FACILITIES = [
   ...AIRPORTS.map(a => ({ id: a.id + '_TWR', name: a.id + ' Tower', kind: 'tower', ap: a.id })),
-  { id: 'JFK_GND', name: 'JFK Ground / Ramp', kind: 'ground', ap: 'JFK' },
+  ...['JFK', 'LGA', 'EWR'].map(id => ({ id: id + '_GND', name: id + ' Ground / Ramp', kind: 'ground', ap: id })),
   { id: 'N90', name: 'New York TRACON (N90)', kind: 'tracon', ap: 'JFK' },
   ...CENTERS.map(c => ({ id: c.id, name: c.name, kind: 'center' })),
 ];
@@ -80,23 +80,73 @@ const IMPACT = {
 };
 const WX_LOSS = { 'Thunderstorms': 0.6, "Nor'easter": 0.65, 'Low visibility / fog': 0.45, 'Snow / ice': 0.5, 'High crosswind': 0.4 };
 
-const RWY = ['4L/22R', '4R/22L', '13L/31R', '13R/31L'];
-const RWY_LOSS = { '4L/22R': 0.3, '4R/22L': 0.2, '13L/31R': 0.2, '13R/31L': 0.32 };
-const FAM = { '4L/22R': 'NE', '4R/22L': 'NE', '13L/31R': 'NW', '13R/31L': 'NW' };
-const END2PHYS = { '4L': '4L/22R', '22R': '4L/22R', '4R': '4R/22L', '22L': '4R/22L', '13L': '13L/31R', '31R': '13L/31R', '13R': '13R/31L', '31L': '13R/31L' };
-const CFG_RWY = {
-  SW: { name: '22 / 31 flow', arr: ['22L', '31R'], dep: ['22R', '31L'] },
-  NE: { name: '4 / 13 flow', arr: ['4L', '13L'], dep: ['4R', '13R'] },
+/* ---- Airfields: runways, flow configurations and a schematic surface layout for each focus airport (not to scale) ---- */
+const FOCUS_IDS = ['JFK', 'LGA', 'EWR'];
+let FOC = 'JFK';
+const AIRFIELD = {
+  JFK: {
+    fam: { '4L/22R': 'NE', '4R/22L': 'NE', '13L/31R': 'NW', '13R/31L': 'NW' },
+    rwy: { '4L/22R': 0.3, '4R/22L': 0.2, '13L/31R': 0.2, '13R/31L': 0.32 }, def: '13R/31L',
+    cfg: { SW: { name: '22 / 31 flow', arr: ['22L', '31R'], dep: ['22R', '31L'] }, NE: { name: '4 / 13 flow', arr: ['4L', '13L'], dep: ['4R', '13R'] } },
+    geo: { '4L/22R': { a: [400, 610], b: [560, 160], n: ['4L', '22R'] }, '4R/22L': { a: [560, 570], b: [672, 255], n: ['4R', '22L'] }, '13L/31R': { a: [260, 230], b: [740, 320], n: ['13L', '31R'] }, '13R/31L': { a: [120, 330], b: [880, 470], n: ['13R', '31L'] } },
+    twys: [
+      { id: 'Taxiway B (north loop)', s: 'B', pts: [[470, 300], [560, 262], [650, 272], [712, 300]], wd: 0.35, wa: 0.1 },
+      { id: 'Taxiway K (south)', s: 'K', pts: [[300, 425], [500, 447], [700, 468], [830, 490]], wd: 0.5, wa: 0.2 },
+      { id: 'Taxiway A (west)', s: 'A', pts: [[372, 570], [440, 390], [490, 255]], wd: 0.3, wa: 0.15 },
+      { id: 'Taxiway Z (east)', s: 'Z', pts: [[690, 540], [706, 430], [696, 335]], wd: 0.25, wa: 0.2 },
+      { id: 'Runway 22R/4L crossing', s: 'X', pts: [[455, 330], [505, 352], [545, 345]], wd: 0.45, wa: 0.3 },
+      { id: 'Terminal 4 ramp', s: 'T4', pts: [[600, 392], [645, 400]], wd: 0.1, wa: 0.45 },
+      { id: 'Ramp / gates (central)', s: 'R', pts: [[512, 330], [560, 342], [625, 360]], wd: 0.15, wa: 0.5 },
+    ],
+    terms: [['T1', 514, 298], ['T2', 548, 294], ['T4', 588, 298], ['T5', 516, 342], ['T7', 556, 348], ['T8', 596, 346]],
+  },
+  LGA: {
+    fam: { '4/22': 'A', '13/31': 'B' },
+    rwy: { '4/22': 0.28, '13/31': 0.3 }, def: '13/31',
+    cfg: { SW: { name: '22 / 31 flow', arr: ['22'], dep: ['31'] }, NE: { name: '4 / 13 flow', arr: ['4'], dep: ['13'] } },
+    geo: { '4/22': { a: [320, 560], b: [640, 160], n: ['4', '22'] }, '13/31': { a: [230, 230], b: [760, 430], n: ['13', '31'] } },
+    twys: [
+      { id: 'Taxiway B (parallel, south)', s: 'B', pts: [[330, 500], [450, 440], [600, 470], [720, 440]], wd: 0.45, wa: 0.25 },
+      { id: 'Taxiway P (north)', s: 'P', pts: [[300, 260], [420, 290], [540, 250]], wd: 0.3, wa: 0.1 },
+      { id: 'Taxiway E (east)', s: 'E', pts: [[640, 230], [650, 330], [690, 410]], wd: 0.25, wa: 0.15 },
+      { id: 'Runway 13/31 crossing', s: 'X', pts: [[470, 320], [510, 340], [550, 365]], wd: 0.45, wa: 0.3 },
+      { id: 'Terminal B ramp', s: 'TB', pts: [[430, 392], [500, 400]], wd: 0.1, wa: 0.45 },
+      { id: 'Ramp / gates (central)', s: 'R', pts: [[440, 380], [520, 392], [590, 404]], wd: 0.15, wa: 0.5 },
+    ],
+    terms: [['A', 410, 372], ['B', 452, 380], ['C', 494, 386], ['D', 536, 392]],
+  },
+  EWR: {
+    fam: { '4L/22R': 'A', '4R/22L': 'A', '11/29': 'B' },
+    rwy: { '4L/22R': 0.3, '4R/22L': 0.28, '11/29': 0.15 }, def: '4L/22R',
+    cfg: { SW: { name: '22 / 29 flow', arr: ['22L'], dep: ['22R'] }, NE: { name: '4 flow', arr: ['4R'], dep: ['4L'] } },
+    geo: { '4L/22R': { a: [330, 610], b: [520, 150], n: ['4L', '22R'] }, '4R/22L': { a: [450, 610], b: [640, 160], n: ['4R', '22L'] }, '11/29': { a: [170, 300], b: [840, 430], n: ['11', '29'] } },
+    twys: [
+      { id: 'Taxiway P (west parallel)', s: 'P', pts: [[300, 560], [380, 400], [470, 230]], wd: 0.4, wa: 0.15 },
+      { id: 'Taxiway Z (east parallel)', s: 'Z', pts: [[620, 540], [640, 400], [650, 250]], wd: 0.3, wa: 0.2 },
+      { id: 'Taxiway B (north)', s: 'B', pts: [[470, 300], [560, 280], [650, 290]], wd: 0.35, wa: 0.1 },
+      { id: 'Runway 11/29 crossing', s: 'X', pts: [[430, 350], [520, 366], [600, 378]], wd: 0.45, wa: 0.3 },
+      { id: 'Terminal B ramp', s: 'TB', pts: [[540, 430], [600, 440]], wd: 0.1, wa: 0.45 },
+      { id: 'Ramp / gates (central)', s: 'R', pts: [[500, 412], [560, 424], [620, 436]], wd: 0.15, wa: 0.5 },
+    ],
+    terms: [['A', 470, 440], ['B', 510, 448], ['C', 550, 456]],
+  },
 };
+let FAM, RWY, RWY_LOSS, END2PHYS, CFG_RWY, RW_GEO, TWYS, TERMS;
+function applyAirfield(id) {
+  FOC = id; const f = AIRFIELD[id];
+  FAM = f.fam; RWY = Object.keys(f.rwy); RWY_LOSS = f.rwy; CFG_RWY = f.cfg; RW_GEO = f.geo; TWYS = f.twys; TERMS = f.terms;
+  END2PHYS = {}; for (const r of RWY) for (const e of r.split('/')) END2PHYS[e] = r;
+}
+applyAirfield('JFK');
 
 const FAC_GROUPS = {
-  'JFK facilities': ['JFK_TWR', 'JFK_GND', 'N90'],
-  'NY metro': ['JFK_TWR', 'JFK_GND', 'N90', 'ZNY', 'LGA_TWR', 'EWR_TWR'],
-  'Northeast': ['JFK_TWR', 'JFK_GND', 'N90', 'ZNY', 'LGA_TWR', 'EWR_TWR', 'ZBW', 'ZDC', 'BOS_TWR', 'PHL_TWR', 'DCA_TWR', 'BWI_TWR', 'IAD_TWR'],
+  get 'Airport facilities'() { return [FOC + '_TWR', FOC + '_GND', 'N90']; },
+  'NY metro': ['JFK_TWR', 'JFK_GND', 'LGA_TWR', 'LGA_GND', 'EWR_TWR', 'EWR_GND', 'N90', 'ZNY'],
+  'Northeast': ['JFK_TWR', 'JFK_GND', 'LGA_TWR', 'LGA_GND', 'EWR_TWR', 'EWR_GND', 'N90', 'ZNY', 'ZBW', 'ZDC', 'BOS_TWR', 'PHL_TWR', 'DCA_TWR', 'BWI_TWR', 'IAD_TWR'],
   'Nationwide': FACILITIES.map(f => f.id),
 };
 const WX_SCOPE = {
-  'JFK only': { JFK: 1 },
+  get 'Airport only'() { return { [FOC]: 1 }; },
   'NY metro': { JFK: 1, LGA: 0.95, EWR: 0.9, PHL: 0.5 },
   'Northeast': { JFK: 1, LGA: 0.95, EWR: 0.9, PHL: 0.8, BOS: 0.8, BWI: 0.6, DCA: 0.6, IAD: 0.5, PIT: 0.3 },
 };
@@ -148,18 +198,19 @@ const SECTOR_CELLS = (() => {
 const SCEN = {};
 function reg(s) { SCEN[s.id] = s; return s; }
 const sel = (key, label, options, def) => ({ key, label, type: 'select', options, def: def ?? options[0] });
+const dsel = (key, label, opts, def) => ({ key, label, type: 'select', get options() { return opts(); }, get def() { return def(); } });
 const rng = (key, label, min, max, step, def) => ({ key, label, type: 'range', min, max, step, def });
 
 reg({
   id: 'comms_tower', name: 'Tower communications loss', cat: 'Communications', start: 30, dur: 60, restore: 20,
-  blurb: 'JFK tower loses voice and/or datalink with aircraft. Staff must rely on backup means and adjacent facilities.',
+  blurb: 'Tower at the focus airport loses voice and/or datalink with aircraft. Staff must rely on backup means and adjacent facilities.',
   params: [sel('mode', 'What is lost', ['Voice only', 'Voice + datalink', 'Voice + datalink + radar display']), sel('sev', 'Severity', ['Total loss', 'Degraded (intermittent)'])],
-  events: p => { const st = p.sev.startsWith('Deg') ? 'degraded' : 'lost'; const e = [{ k: 'src', fac: 'JFK_TWR', src: 'VOICE', st }]; if (/datalink/.test(p.mode)) e.push({ k: 'src', fac: 'JFK_TWR', src: 'DATALINK', st }); if (/radar/.test(p.mode)) e.push({ k: 'src', fac: 'JFK_TWR', src: 'RADAR', st: 'degraded' }); return e; },
+  events: p => { const st = p.sev.startsWith('Deg') ? 'degraded' : 'lost'; const e = [{ k: 'src', fac: FOC + '_TWR', src: 'VOICE', st }]; if (/datalink/.test(p.mode)) e.push({ k: 'src', fac: FOC + '_TWR', src: 'DATALINK', st }); if (/radar/.test(p.mode)) e.push({ k: 'src', fac: FOC + '_TWR', src: 'RADAR', st: 'degraded' }); return e; },
 });
 reg({
   id: 'comms_collapse', name: 'Regional / total comms collapse', cat: 'Communications', start: 30, dur: 90, restore: 30,
   blurb: 'Worst case: communications fail across a whole region up to the entire ATC network.',
-  params: [sel('extent', 'Extent', ['JFK facilities', 'NY metro', 'Northeast', 'Nationwide'], 'NY metro'), sel('layers', 'What fails', ['Voice + datalink', 'Voice + datalink + coordination links', 'All comms + surveillance + flight data (worst case)'])],
+  params: [sel('extent', 'Extent', ['Airport facilities', 'NY metro', 'Northeast', 'Nationwide'], 'NY metro'), sel('layers', 'What fails', ['Voice + datalink', 'Voice + datalink + coordination links', 'All comms + surveillance + flight data (worst case)'])],
   events: p => {
     const e = [], L = p.layers;
     for (const f of FAC_GROUPS[p.extent]) {
@@ -177,14 +228,14 @@ reg({
 });
 reg({
   id: 'runway', name: 'Runway closure', cat: 'Airport surface', start: 20, dur: 120, restore: 0,
-  blurb: 'One or two JFK runways close (disabled aircraft, FOD, maintenance).',
-  params: [sel('r1', 'Runway', RWY, '13R/31L'), sel('r2', 'Second runway', ['None', ...RWY])],
-  events: p => { const e = [{ k: 'rwy', ap: 'JFK', rwy: p.r1 }]; if (p.r2 !== 'None' && p.r2 !== p.r1) e.push({ k: 'rwy', ap: 'JFK', rwy: p.r2 }); return e; },
+  blurb: 'One or two runways at the focus airport close (disabled aircraft, FOD, maintenance).',
+  params: [dsel('r1', 'Runway', () => RWY, () => AIRFIELD[FOC].def), dsel('r2', 'Second runway', () => ['None', ...RWY], () => 'None')],
+  events: p => { const e = [{ k: 'rwy', ap: FOC, rwy: p.r1 }]; if (p.r2 !== 'None' && p.r2 !== p.r1) e.push({ k: 'rwy', ap: FOC, rwy: p.r2 }); return e; },
 });
 reg({
   id: 'feed', name: 'Data-feed outage', cat: 'Data', start: 30, dur: 75, restore: 15,
   blurb: 'A surveillance, flight-plan, weather or coordination data source goes stale or disappears.',
-  params: [sel('feed', 'Feed', ['ADS-B', 'Radar', 'Flight plan data', 'Weather data', 'Inter-facility link'], 'Inter-facility link'), sel('scope', 'Scope', ['JFK facilities', 'NY metro', 'Nationwide'], 'NY metro'), sel('sev', 'Severity', ['Total loss', 'Degraded (stale / partial)'])],
+  params: [sel('feed', 'Feed', ['ADS-B', 'Radar', 'Flight plan data', 'Weather data', 'Inter-facility link'], 'Inter-facility link'), sel('scope', 'Scope', ['Airport facilities', 'NY metro', 'Nationwide'], 'NY metro'), sel('sev', 'Severity', ['Total loss', 'Degraded (stale / partial)'])],
   events: p => { const src = { 'ADS-B': 'ADSB', 'Radar': 'RADAR', 'Flight plan data': 'FLIGHTDATA', 'Weather data': 'WX', 'Inter-facility link': 'NETWORK' }[p.feed]; const st = p.sev.startsWith('Deg') ? 'degraded' : 'lost'; return FAC_GROUPS[p.scope].map(f => ({ k: 'src', fac: f, src, st })); },
 });
 reg({
@@ -193,9 +244,9 @@ reg({
   params: [sel('depth', 'How far it cascades', ['Tower only', 'Tower + TRACON', 'Tower + TRACON + Center'], 'Tower + TRACON')],
   events: (p, d) => {
     const a = f => Math.round(f * d), e = [
-      { k: 'src', fac: 'JFK_TWR', src: 'POWER', st: 'degraded', at: 0 },
-      { k: 'src', fac: 'JFK_TWR', src: 'VOICE', st: 'degraded', at: a(0.25) }, { k: 'src', fac: 'JFK_TWR', src: 'DATALINK', st: 'degraded', at: a(0.25) },
-      { k: 'src', fac: 'JFK_TWR', src: 'POWER', st: 'lost', at: a(0.5) }, { k: 'src', fac: 'JFK_TWR', src: 'RADAR', st: 'lost', at: a(0.5) }, { k: 'src', fac: 'JFK_GND', src: 'POWER', st: 'lost', at: a(0.5) },
+      { k: 'src', fac: FOC + '_TWR', src: 'POWER', st: 'degraded', at: 0 },
+      { k: 'src', fac: FOC + '_TWR', src: 'VOICE', st: 'degraded', at: a(0.25) }, { k: 'src', fac: FOC + '_TWR', src: 'DATALINK', st: 'degraded', at: a(0.25) },
+      { k: 'src', fac: FOC + '_TWR', src: 'POWER', st: 'lost', at: a(0.5) }, { k: 'src', fac: FOC + '_TWR', src: 'RADAR', st: 'lost', at: a(0.5) }, { k: 'src', fac: FOC + '_GND', src: 'POWER', st: 'lost', at: a(0.5) },
     ];
     if (/TRACON/.test(p.depth)) e.push({ k: 'src', fac: 'N90', src: 'NETWORK', st: 'lost', at: a(0.3) }, { k: 'src', fac: 'N90', src: 'FLIGHTDATA', st: 'degraded', at: a(0.4) }, { k: 'src', fac: 'N90', src: 'RADAR', st: 'degraded', at: a(0.6) });
     if (/Center/.test(p.depth)) e.push({ k: 'src', fac: 'ZNY', src: 'NETWORK', st: 'degraded', at: a(0.55) }, { k: 'src', fac: 'ZNY', src: 'FLIGHTDATA', st: 'degraded', at: a(0.6) }, { k: 'src', fac: 'ZNY', src: 'VOICE', st: 'degraded', at: a(0.7) });
@@ -205,13 +256,13 @@ reg({
 reg({
   id: 'surface', name: 'Surface incident / taxiway blockage', cat: 'Airport surface', start: 25, dur: 45, restore: 0,
   blurb: 'A blocked taxiway or runway crossing slows departures and arrival taxi-in. Not announced in alerts (tests consistency checks).',
-  params: [sel('loc', 'Location', ['Taxiway B (north loop)', 'Taxiway K (south)', 'Runway 22R/4L crossing', 'Terminal 4 ramp']), rng('sev', 'Severity', 0.2, 1, 0.05, 0.6)],
-  events: p => [{ k: 'taxi', id: p.loc }, { k: 'cap', ap: 'JFK', m: 1 - 0.6 * p.sev }],
+  params: [dsel('loc', 'Location', () => TWYS.map(t => t.id).slice(0, 5), () => TWYS[0].id), rng('sev', 'Severity', 0.2, 1, 0.05, 0.6)],
+  events: p => [{ k: 'taxi', id: p.loc }, { k: 'cap', ap: FOC, m: 1 - 0.6 * p.sev }],
 });
 
 const MITS = [
-  { key: 'gdp', name: 'Ground delay program', desc: 'Hold JFK-bound flights at their origin to match modeled arrival slots (trades airborne holding for ground delay).' },
-  { key: 'gstop', name: 'Ground stop (JFK-bound)', desc: 'Stop JFK-bound departures for a set time, then release.', extra: { dur: 40 } },
+  { key: 'gdp', name: 'Ground delay program', desc: 'Hold flights bound for the focus airport at their origin to match modeled arrival slots (trades airborne holding for ground delay).' },
+  { key: 'gstop', name: 'Ground stop (focus-airport-bound)', desc: 'Stop departures bound for the focus airport for a set time, then release.', extra: { dur: 40 } },
   { key: 'divert', name: 'Divert long holds', desc: 'Aircraft holding more than 20 min are advised to divert to the best alternate.' },
   { key: 'rwycfg', name: 'Runway configuration change', desc: 'Switch to the best available runway configuration; recovers part of the weather / closure loss.' },
   { key: 'backupComms', name: 'Activate backup communications', desc: 'Contingency radios / alternate frequencies per facility procedure; softens voice and datalink loss.' },

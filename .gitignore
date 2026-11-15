@@ -1,7 +1,6 @@
 node_modules/
 dist/
 *.tsbuildinfo
-public/Cesium/
 .env
 .env.*
 !.env.example

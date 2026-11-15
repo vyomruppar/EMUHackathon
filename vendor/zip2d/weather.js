@@ -72,13 +72,13 @@ function wxAirport(id, t) {
     else { vis = Math.min(vis, 2.8 - 1.8 * s); ceil = Math.min(ceil, 1500 - 800 * s); if (type === "Nor'easter") { wind = Math.max(wind, 16 + 20 * s); dir = 55; } if (type === 'Thunderstorms') wind = Math.max(wind, 12 + 10 * s); if (type === 'Snow / ice') temp = Math.min(temp, 31); } }
   const cat = (vis < 1 || ceil < 500) ? 'LIFR' : (vis < 3 || ceil < 1000) ? 'IFR' : (vis <= 5 || ceil <= 3000) ? 'MVFR' : 'VFR';
   const kts = wind * 0.869, gust = kts * (type === 'Thunderstorms' ? 1.9 : type === "Nor'easter" || type === 'High crosswind' ? 1.6 : 1.4);
-  const xw = Math.min(...[40, 130].map(ax => Math.abs(kts * Math.sin((dir - ax) * Math.PI / 180)))); // best-runway crosswind: JFK's real axes (04/22, 13/31); assumed for other airports
+  const xw = Math.min(...(id === 'EWR' ? [40, 110] : [40, 130]).map(ax => Math.abs(kts * Math.sin((dir - ax) * Math.PI / 180)))); // best-runway crosswind using each airport's runway axes (JFK/LGA 04-22 + 13-31, EWR 04-22 + 11-29); assumed for others
   return { cat, temp, wind, dir, vis, ceil, type, pp: Math.min(100, v * 140), kts, gust, xw, xwg: xw * gust / Math.max(1, kts) };
 }
 const wxXwCol = x => x >= 22 ? '#ff4d5e' : x >= 15 ? '#f5b942' : 'rgba(215,222,235,.8)';
-const WX_HDG = { '4L': 40, '4R': 40, '22L': 220, '22R': 220, '13L': 130, '13R': 130, '31L': 310, '31R': 310 };
-function wxWindBlock() { // JFK runway-by-runway wind components, for the Surface view
-  const w = wxAirport('JFK', S.sim.t), rows = RWY.map(r => { const [e1, e2] = r.split('/'), c = e => w.kts * Math.cos((w.dir - WX_HDG[e]) * Math.PI / 180), end = c(e1) >= c(e2) ? e1 : e2, hw = c(end), xw = Math.abs(w.kts * Math.sin((w.dir - WX_HDG[end]) * Math.PI / 180));
+const WX_HDG = { '4': 40, '22': 220, '13': 130, '31': 310, '11': 110, '29': 290, '4L': 40, '4R': 40, '22L': 220, '22R': 220, '13L': 130, '13R': 130, '31L': 310, '31R': 310 };
+function wxWindBlock() { // focus-airport runway-by-runway wind components, for the Surface view
+  const w = wxAirport(FOC, S.sim.t), rows = RWY.map(r => { const [e1, e2] = r.split('/'), c = e => w.kts * Math.cos((w.dir - WX_HDG[e]) * Math.PI / 180), end = c(e1) >= c(e2) ? e1 : e2, hw = c(end), xw = Math.abs(w.kts * Math.sin((w.dir - WX_HDG[end]) * Math.PI / 180));
     return `<div class="row sb" style="font-size:11.5px;gap:6px;white-space:nowrap"><span class="mono">${r}</span><span class="mono muted">${end}: head ${Math.round(hw)} · <b style="color:${wxXwCol(xw)}">cross ${Math.round(xw)}</b> kt</span></div>`; }).join('');
   return `<div class="sec"><h3>Wind &amp; crosswind ${tag('SYNTHETIC')}</h3><div class="sub2" style="margin-bottom:6px">${wxDir(w.dir)} ${Math.round(w.kts)} kt, gusts ${Math.round(w.gust)} kt</div><div class="list" style="gap:5px">${rows}</div>
   <div class="note">Wind may favor changing runway configuration when crosswind on the active runways grows. Advisory only. Nothing here is a clearance.</div></div>`;
@@ -104,7 +104,7 @@ function wxDrawFront(tt) { // dashed cold-front line with small triangles showin
 function wxAirportMark(a, x, y, r, tt) { // ring only where flying weather is worse than normal
   const w = wxAirport(a.id, tt); if (w.cat === 'VFR') return;
   ctx.save(); ctx.strokeStyle = CAT_COL[w.cat]; ctx.globalAlpha = 0.85; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r + 3.5, 0, 7); ctx.stroke();
-  if (cam.s > 12 || a.id === S.sel || a.id === 'JFK') { ctx.fillStyle = CAT_COL[w.cat]; ctx.font = '600 9px Geist Mono,monospace'; ctx.textAlign = 'center'; ctx.fillText(w.cat, x, y + r + 16); ctx.textAlign = 'left'; }
+  if (cam.s > 12 || a.id === S.sel || a.id === FOC) { ctx.fillStyle = CAT_COL[w.cat]; ctx.font = '600 9px Geist Mono,monospace'; ctx.textAlign = 'center'; ctx.fillText(w.cat, x, y + r + 16); ctx.textAlign = 'left'; }
   ctx.restore();
 }
 
@@ -141,11 +141,11 @@ function wxDrawCells(tt) { // severe thunderstorm cells (ring + bolt); weaker ce
     ctx.fillStyle = 'rgba(255,225,90,.95)'; ctx.beginPath(); ctx.moveTo(x + 1.5, y - 6); ctx.lineTo(x - 3.5, y + 0.8); ctx.lineTo(x - 0.3, y + 0.8); ctx.lineTo(x - 1.8, y + 6); ctx.lineTo(x + 3.5, y - 1.2); ctx.lineTo(x + 0.3, y - 1.2); ctx.closePath(); ctx.fill(); }
 }
 function wxAirportXw(a, x, y, r, tt) { // wind arrow blowing onto the airport; amber or red when the crosswind is strong
-  const w = wxAirport(a.id, tt); if (w.xw < 12 && a.id !== 'JFK' && a.id !== S.sel) return;
+  const w = wxAirport(a.id, tt); if (w.xw < 12 && a.id !== FOC && a.id !== S.sel) return;
   const to = (w.dir + 180) * Math.PI / 180, ux = Math.sin(to), uy = -Math.cos(to), L = 14 + Math.min(14, w.kts * 0.5), x1 = x - ux * (r + 6), y1 = y - uy * (r + 6), x0 = x - ux * (r + 6 + L), y0 = y - uy * (r + 6 + L), col = wxXwCol(w.xw);
   ctx.save(); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 - ux * 6 - uy * 3.2, y1 - uy * 6 + ux * 3.2); ctx.lineTo(x1 - ux * 6 + uy * 3.2, y1 - uy * 6 - ux * 3.2); ctx.closePath(); ctx.fill();
-  if (w.xw >= 15 || cam.s > 12 || a.id === S.sel || a.id === 'JFK') { ctx.font = '600 9px Geist Mono,monospace'; ctx.textAlign = 'center'; ctx.fillText('XW ' + Math.round(w.xw), x0 - ux * 8, y0 - uy * 8 + 3); }
+  if (w.xw >= 15 || cam.s > 12 || a.id === S.sel || a.id === FOC) { ctx.font = '600 9px Geist Mono,monospace'; ctx.textAlign = 'center'; ctx.fillText('XW ' + Math.round(w.xw), x0 - ux * 8, y0 - uy * 8 + 3); }
   ctx.restore();
 }
 

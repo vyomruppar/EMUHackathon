@@ -1,4 +1,4 @@
-# AIRSPACE (AeroFlo)
+# AeroFlo 2D workspace (original source)
 Advisory-only decision-support and training app for JFK / LGA / EWR operations. Synthetic data only.
 
 - Run: open `dist/airspace.html` in any browser (no install needed).
