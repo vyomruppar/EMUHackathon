@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIRSPACE — ATC Operations &amp; Resilience Support (JFK)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>/*CSS*/</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="brand">
+  <div class="logo">AIRSPACE</div>
+  <div class="sub">ATC operations &amp; resilience · JFK</div>
+</div>
+<nav id="nav" class="pill">
+  <button data-view="net" class="on">Network</button>
+  <button data-view="sfc">JFK Surface</button>
+  <button data-view="lab">What-If Lab</button>
+  <button data-view="deg">Degraded Ops</button>
+  <button data-view="alr">Alerts &amp; Checks<span id="bell" class="bell"></span></button>
+</nav>
+<div id="topr">
+  <div id="scenChip" class="chip"></div>
+  <div id="advisory" class="chip adv" title="AIRSPACE never issues clearances, directs aircraft or activates procedures.">ADVISORY ONLY</div>
+  <button id="guide" class="chip">How it works</button>
+</div>
+
+<main>
+  <section id="v-net" class="view on">
+    <aside class="panel L" id="netL"></aside>
+    <aside class="panel R" id="netR"></aside>
+  </section>
+  <section id="v-sfc" class="view">
+    <aside class="panel L" id="sfcL"></aside>
+    <aside class="panel R" id="sfcR"></aside>
+  </section>
+  <section id="v-lab" class="view grid lab">
+    <aside class="panel" id="labLib"></aside>
+    <aside class="panel" id="labMain"></aside>
+  </section>
+  <section id="v-deg" class="view grid deg">
+    <aside class="panel" id="degMat"></aside>
+    <aside class="panel" id="degCap"></aside>
+    <aside class="panel" id="degTask"></aside>
+    <aside class="panel" id="degRec"></aside>
+  </section>
+  <section id="v-alr" class="view grid alr">
+    <aside class="panel" id="alrFeed"></aside>
+    <aside class="panel" id="alrLedger"></aside>
+    <aside class="panel" id="alrLog"></aside>
+  </section>
+</main>
+
+<div id="zoomc" class="zoomc"><button data-z="in" title="Zoom in (+ or double-click)">+</button><button data-z="out" title="Zoom out (− or shift + double-click)">−</button><button data-z="fit" title="Fit US (0)">⤢</button></div>
+
+<footer id="tl" class="panel">
+  <div class="tlc">
+    <button id="bPlay" class="ic" title="Play / pause">❚❚</button>
+    <button id="bRestart" class="ic" title="Restart">↺</button>
+    <div class="spd" id="spd" title="Multiples of real time"><button data-s="1">Real time</button><button data-s="10" class="on">10×</button><button data-s="60">60×</button><button data-s="300">300×</button></div>
+    <div id="clock" class="mono"></div>
+  </div>
+  <div class="tlm"><canvas id="tlc"></canvas></div>
+  <div class="tlr" id="tlLegend"></div>
+</footer>
+<div id="modal" class="modal"></div>
+
+<script>/*JS*/</script>
+</body>
+</html>

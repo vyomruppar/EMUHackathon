@@ -1,0 +1,5 @@
+import { handleApi } from "../server/index.mjs";
+
+export default function handler(req, res) {
+  return handleApi(req, res);
+}

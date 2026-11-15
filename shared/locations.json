@@ -1,0 +1,22 @@
+[
+  {"id":"JFK","name":"John F. Kennedy International","city":"New York","lat":40.6413,"lon":-73.7781},
+  {"id":"LGA","name":"LaGuardia Airport","city":"New York","lat":40.7769,"lon":-73.8740},
+  {"id":"EWR","name":"Newark Liberty International","city":"Newark","lat":40.6895,"lon":-74.1745},
+  {"id":"BOS","name":"Logan International","city":"Boston","lat":42.3656,"lon":-71.0096},
+  {"id":"IAD","name":"Dulles International","city":"Washington","lat":38.9531,"lon":-77.4565},
+  {"id":"ATL","name":"Hartsfield-Jackson Atlanta","city":"Atlanta","lat":33.6407,"lon":-84.4277},
+  {"id":"MIA","name":"Miami International","city":"Miami","lat":25.7954,"lon":-80.2900},
+  {"id":"MCO","name":"Orlando International","city":"Orlando","lat":28.4312,"lon":-81.3081},
+  {"id":"ORD","name":"O'Hare International","city":"Chicago","lat":41.9742,"lon":-87.9073},
+  {"id":"DTW","name":"Detroit Metropolitan","city":"Detroit","lat":42.2162,"lon":-83.3554},
+  {"id":"MSP","name":"Minneapolis–Saint Paul International","city":"Minneapolis","lat":44.8848,"lon":-93.2223},
+  {"id":"DFW","name":"Dallas Fort Worth International","city":"Dallas","lat":32.8998,"lon":-97.0403},
+  {"id":"IAH","name":"George Bush Intercontinental","city":"Houston","lat":29.9902,"lon":-95.3368},
+  {"id":"DEN","name":"Denver International","city":"Denver","lat":39.8561,"lon":-104.6737},
+  {"id":"PHX","name":"Phoenix Sky Harbor","city":"Phoenix","lat":33.4342,"lon":-112.0116},
+  {"id":"LAS","name":"Harry Reid International","city":"Las Vegas","lat":36.0840,"lon":-115.1537},
+  {"id":"LAX","name":"Los Angeles International","city":"Los Angeles","lat":33.9416,"lon":-118.4085},
+  {"id":"SFO","name":"San Francisco International","city":"San Francisco","lat":37.6213,"lon":-122.3790},
+  {"id":"SEA","name":"Seattle–Tacoma International","city":"Seattle","lat":47.4502,"lon":-122.3088},
+  {"id":"SAN","name":"San Diego International","city":"San Diego","lat":32.7338,"lon":-117.1933}
+]
